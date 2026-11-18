@@ -12,6 +12,7 @@ import {gymApi} from '../lib/gym-api';
 import {microphoneError,newRecognition,playVoice,recognitionAvailable,stopVoice} from '../lib/speech-voice';
 import type {RecognitionInstance} from '../lib/speech-voice';
 import Artwork from './Artwork';
+import {createWorkoutClock} from '../../shared/workout-clock.mjs';
 import ReviewModal from './ReviewModal';
 
 type Phase='intro'|'connecting'|'ready'|'listening'|'thinking'|'speaking'|'paused'|'reviewing'|'done';
@@ -60,8 +61,7 @@ export default function Experience({
  const streamRef=useRef<MediaStream|null>(null);
  const audioContextRef=useRef<AudioContext|null>(null);
  const rafRef=useRef<number|null>(null);
- const activeSinceRef=useRef(0);
- const activeElapsedRef=useRef(0);
+ const clockRef=useRef(createWorkoutClock());
  const pendingResponseRef=useRef<Reply|null>(null);
  const pendingSpeechDone=useRef<(()=>void)|null>(null);
  const pausedFromRef=useRef<Phase>('ready');
@@ -72,9 +72,7 @@ export default function Experience({
  const mountedRef=useRef(true);
 
  function phaseTo(next:Phase){phaseRef.current=next;setPhase(next);}
- function activeSeconds(){
-  return Math.min(1200,Math.floor((activeElapsedRef.current+(activeSinceRef.current?Date.now()-activeSinceRef.current:0))/1000));
- }
+ function activeSeconds(){return clockRef.current.seconds();}
  const stopMicrophone=useCallback(()=>{
   if(rafRef.current!==null)cancelAnimationFrame(rafRef.current);
   rafRef.current=null;
@@ -213,11 +211,11 @@ export default function Experience({
   if(finishRef.current||!sessionRef.current||review)return;
   finishRef.current=true;pauseRef.current=false;setPaused(false);
   cancelCapture();stopSpeech();phaseTo('reviewing');setError('');setNotice('');
-  if(activeSinceRef.current){activeElapsedRef.current+=Date.now()-activeSinceRef.current;activeSinceRef.current=0;}
+  clockRef.current.pause();
   try{
    const response=await gymApi<{review:Review}>('finish',{
     sessionId:sessionRef.current,
-    durationSeconds:Math.min(1200,Math.floor(activeElapsedRef.current/1000)),
+    durationSeconds:clockRef.current.seconds(),
     history:transcriptRef.current
    });
    if(!mountedRef.current)return;
@@ -242,7 +240,7 @@ export default function Experience({
    });
    if(closedRef.current)return;
    sessionRef.current=data.sessionId;
-   activeSinceRef.current=Date.now();activeElapsedRef.current=0;
+   clockRef.current.start();
    transcriptRef.current=[{role:'character',text:data.opening,source:'opening',turn:0}];
    setInstructions(false);setNotice('');setStarting(false);
    announce(data.opening,'opening',()=>listenRef.current());
@@ -255,7 +253,7 @@ export default function Experience({
   if(pauseRef.current||!sessionRef.current||phaseRef.current==='done'||phaseRef.current==='reviewing')return;
   pauseRef.current=true;setPaused(true);
   pausedFromRef.current=phaseRef.current;
-  if(activeSinceRef.current){activeElapsedRef.current+=Date.now()-activeSinceRef.current;activeSinceRef.current=0;}
+  clockRef.current.pause();
   if(phaseRef.current==='listening'){
    // Aborting must never submit a half-finished utterance as a complete answer.
    if(recognisedRef.current.trim()){setDraft(recognisedRef.current);setTypeMode(true);}
@@ -267,7 +265,7 @@ export default function Experience({
  function resumeSession(){
   if(!pauseRef.current)return;
   pauseRef.current=false;setPaused(false);
-  activeSinceRef.current=Date.now();
+  clockRef.current.resume();
   if(pendingResponseRef.current){
    const data=pendingResponseRef.current;pendingResponseRef.current=null;
    announce(data.reply,data.source,()=>{
