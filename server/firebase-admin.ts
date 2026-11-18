@@ -1,10 +1,11 @@
 import { cert, getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
+import type { ServiceAccount } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 
 function initialize() {
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (json) return initializeApp({ credential: cert(JSON.parse(json) as object) });
+  if (json) return initializeApp({ credential: cert(JSON.parse(json) as ServiceAccount) });
   // For emulators / managed service identity; not a substitute for configured auth.
   return initializeApp({ credential: applicationDefault(), projectId: process.env.GCLOUD_PROJECT });
 }

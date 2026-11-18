@@ -24,6 +24,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const input = requestSchema.parse(req.body);
     if (input.action === 'me') return res.status(200).json({ admin });
     if (input.action === 'createChild') {
+      const childCount = await store.collection('users').doc(uid).collection('children').count().get();
+      if (childCount.data().count >= 12) return res.status(429).json({ error: 'Learner profile limit reached.' });
       const ref = store.collection('users').doc(uid).collection('children').doc();
       await ref.create({ firstName: input.firstName, grade: input.grade, createdAt: FieldValue.serverTimestamp() });
       return res.status(200).json({ childId: ref.id });
@@ -129,7 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const sequence = (current.get('sequence') as number) + 1;
           if (sequence > EVENT_LIMIT) throw new Error('Classroom event limit reached.');
           const nextStage = pending ? stage : Math.min(stage + 1, totalStages);
-          const status = pending ? 'teaching' : stage === 3 ? 'awaiting_answer' : nextStage >= totalStages ? 'completed' : 'teaching';
+          const status = pending ? current.get('status') as string : stage === 3 ? 'awaiting_answer' : nextStage >= totalStages ? 'completed' : 'teaching';
           tx.create(room.collection('events').doc(eventId(sequence)), { sequence, type: 'teacher_step', payload: { ...step, stage, answeredQuestion: !!pending }, createdAt: FieldValue.serverTimestamp() });
           tx.update(room, { sequence, status, stage: nextStage, lease: null, leaseUntil: 0, tokensUsed: FieldValue.increment((usage as {totalTokens?:number}).totalTokens ?? 0) });
           if (pending) tx.update(pending.ref, { status: 'answered' });
