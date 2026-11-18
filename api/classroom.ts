@@ -45,7 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await store.runTransaction(async tx => {
         const existing = await tx.get(room);
         if (!existing.exists) {
-          tx.create(room, { title: 'My maths studio', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', mode: 'practice', stage: 0, sequence: 0, memberCount: 1, mode: 'shared', createdAt: FieldValue.serverTimestamp(), createdBy: uid });
+          tx.create(room, { title: 'My maths studio', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', mode: 'practice', stage: 0, sequence: 0, memberCount: 1, createdAt: FieldValue.serverTimestamp(), createdBy: uid });
           tx.create(membership, { role: 'facilitator', joinedAt: FieldValue.serverTimestamp() });
         } else if (existing.get('createdBy') !== uid || existing.get('mode') !== 'practice') {
           throw new Error('Practice classroom unavailable.');
@@ -65,7 +65,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!admin) return res.status(403).json({ error: 'Administrator access required.' });
       const room = store.collection('classrooms').doc();
       const batch = store.batch();
-      batch.create(room, { title: 'Factorisation lab', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', stage: 0, sequence: 0, memberCount: 1, createdAt: FieldValue.serverTimestamp(), createdBy: uid });
+      batch.create(room, { title: 'Factorisation lab', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', mode: 'shared', stage: 0, sequence: 0, memberCount: 1, createdAt: FieldValue.serverTimestamp(), createdBy: uid });
       batch.create(room.collection('members').doc(uid), { role: 'teacher', joinedAt: FieldValue.serverTimestamp() });
       await batch.commit();
       return res.status(200).json({ roomId: room.id });
