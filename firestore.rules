@@ -11,7 +11,7 @@ service cloud.firestore {
     }
     match /classrooms/{roomId} {
       // Classroom metadata never includes identities, answers or student questions.
-      allow read: if signedIn();
+      allow read: if signedIn() && (resource.data.mode == 'shared' || resource.data.createdBy == request.auth.uid);
       allow write: if false;
       match /members/{uid} { allow read: if own(uid); allow write: if false; }
       match /events/{eventId} { allow read: if member(roomId); allow write: if false; }

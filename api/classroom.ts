@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { FieldValue } from 'firebase-admin/firestore';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { adminServices, isAdmin } from '../server/firebase-admin.js';
 import { requestSchema } from '../server/schema.js';
 import { teach, totalStages } from '../server/teacher.js';
@@ -23,6 +23,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const admin = isAdmin(user);
     const input = requestSchema.parse(req.body);
     if (input.action === 'me') return res.status(200).json({ admin });
+
+    if (input.action === 'list') {
+      const [mine, shared] = await Promise.all([
+        store.collection('classrooms').where('createdBy', '==', uid).limit(40).get(),
+        store.collection('classrooms').where('mode', '==', 'shared').limit(40).get()
+      ]);
+      const rooms = new Map<string, Record<string, unknown>>();
+      for (const doc of [...shared.docs, ...mine.docs]) rooms.set(doc.id, { id: doc.id, ...doc.data() });
+      return res.status(200).json({ rooms: [...rooms.values()].sort((a,b) => {
+        const aa = a.createdAt as { toMillis?: () => number } | undefined;
+        const bb = b.createdAt as { toMillis?: () => number } | undefined;
+        return (bb?.toMillis?.() ?? 0) - (aa?.toMillis?.() ?? 0);
+      }) });
+    }
+    if (input.action === 'createPractice') {
+      // Exactly one reusable practice room per account; no unbounded room creation.
+      const id = 'practice-' + createHash('sha256').update(uid).digest('hex').slice(0,24);
+      const room = store.collection('classrooms').doc(id);
+      const membership = room.collection('members').doc(uid);
+      await store.runTransaction(async tx => {
+        const existing = await tx.get(room);
+        if (!existing.exists) {
+          tx.create(room, { title: 'My maths studio', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', mode: 'practice', stage: 0, sequence: 0, memberCount: 1, mode: 'shared', createdAt: FieldValue.serverTimestamp(), createdBy: uid });
+          tx.create(membership, { role: 'facilitator', joinedAt: FieldValue.serverTimestamp() });
+        } else if (existing.get('createdBy') !== uid || existing.get('mode') !== 'practice') {
+          throw new Error('Practice classroom unavailable.');
+        }
+      });
+      return res.status(200).json({ roomId: room.id });
+    }
+
     if (input.action === 'createChild') {
       const childCount = await store.collection('users').doc(uid).collection('children').count().get();
       if (childCount.data().count >= 12) return res.status(429).json({ error: 'Learner profile limit reached.' });
@@ -43,8 +74,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const snap = await room.get();
     if (!snap.exists) return res.status(404).json({ error: 'Classroom not found.' });
     const membership = room.collection('members').doc(uid);
+    const owner = snap.get('createdBy') === uid;
+    const practice = snap.get('mode') === 'practice';
+    if (practice && !owner) return res.status(403).json({ error: 'This is another account’s practice classroom.' });
+    if (input.action === 'snapshot') {
+      const member = await membership.get();
+      const events = member.exists
+        ? await room.collection('events').orderBy('sequence', 'asc').limit(EVENT_LIMIT).get()
+        : null;
+      return res.status(200).json({
+        room: { id: room.id, ...snap.data() },
+        joined: member.exists,
+        events: events ? events.docs.map(d => ({ id: d.id, ...d.data() })) : []
+      });
+    }
     if (input.action === 'join') {
-      if (!admin) {
+      if (!admin && !owner) {
         if (!input.childId) return res.status(400).json({ error: 'Select a child profile first.' });
         const child = await store.collection('users').doc(uid).collection('children').doc(input.childId).get();
         if (!child.exists) return res.status(403).json({ error: 'Child profile does not belong to this parent.' });
@@ -54,9 +99,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const existing = await tx.get(membership);
         if (!roomState.exists) throw new Error('Room removed.');
         if (!existing.exists) {
-          tx.create(membership, { role: admin ? 'teacher' : 'learner', childId: input.childId ?? null, joinedAt: FieldValue.serverTimestamp() });
+          tx.create(membership, { role: (admin || owner) ? 'teacher' : 'learner', childId: input.childId ?? null, joinedAt: FieldValue.serverTimestamp() });
           tx.update(room, { memberCount: FieldValue.increment(1) });
-        } else if (!admin && existing.get('childId') !== input.childId) {
+        } else if (!admin && !owner && existing.get('childId') !== input.childId) {
           throw new Error('This parent joined with a different child profile.');
         }
       });
@@ -64,8 +109,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     const member = await membership.get();
     if (!member.exists) return res.status(403).json({ error: 'Join this classroom first.' });
-    const requiresAdmin = ['start','step','pause','resume'].includes(input.action);
-    if (requiresAdmin && !admin) return res.status(403).json({ error: 'Teacher controls require an administrator.' });
+    const requiresFacilitator = ['start','step','pause','resume','restart'].includes(input.action);
+    if (requiresFacilitator && !(owner || (admin && !practice))) return res.status(403).json({ error: 'Only the classroom facilitator can control the lesson.' });
+    if (input.action === 'restart') {
+      if (!owner || !practice) return res.status(403).json({ error: 'Only the practice room owner can restart this lesson.' });
+      await store.runTransaction(async tx => {
+        const current = await tx.get(room);
+        if (!current.exists) throw new Error('Classroom not found.');
+        const sequence = (current.get('sequence') as number) + 1;
+        if (sequence > EVENT_LIMIT) throw new Error('Classroom event limit reached.');
+        tx.create(room.collection('events').doc(eventId(sequence)), { sequence, type: 'classroom_reset', payload: { status: 'scheduled' }, createdAt: FieldValue.serverTimestamp() });
+        tx.update(room, { sequence, status: 'scheduled', stage: 0, lease: null, leaseUntil: 0 });
+      });
+      return res.status(200).json({ status: 'scheduled' });
+    }
 
     async function appendEvent(type: string, payload: Record<string, unknown>, status?: string) {
       await store.runTransaction(async tx => {
