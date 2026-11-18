@@ -56,7 +56,6 @@ const steps = [
       {type:'clear_whiteboard'},
       {type:'write_text',text:'SOLUTION & CHECK',x:130,y:100},
       {type:'write_equation',text:'x² + 5x + 6 = (x + 2)(x + 3)',x:130,y:225},
-      {type:'write_text',text:'Expand to verify:',x:130,y:340},
       {type:'write_equation',text:'x² + 3x + 2x + 6',x:130,y:405},
       {type:'write_equation',text:'= x² + 5x + 6  ✓',x:130,y:475},
       {type:'write_text',text:'Multiply → add → check',x:130,y:610}
