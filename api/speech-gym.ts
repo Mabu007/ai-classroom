@@ -240,18 +240,20 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    try{
     const history=sanitizeConversation(input.history);
     response=await characterResponse(challenge,history,message,turn-1);
-    const update:Record<string,unknown>={workingUntil:0,updatedAt:FieldValue.serverTimestamp()};
-    if(snap.get('transcriptConsent')===true){
-     update.transcript=FieldValue.arrayUnion(
-      {role:'user',text:message,turn},
-      {role:'character',text:response.reply,source:response.source,turn}
-     );
-    }
-    // Don't resurrect transcript events after an in-flight turn was abandoned
-    // or finalized while the model request was running.
+    // Re-check transcript consent inside the transaction. A user may delete
+    // the transcript while inference is in flight: never recreate it afterward.
     await store.runTransaction(async tx=>{
       const current=await tx.get(ref);
       if(!current.exists||current.get('status')!=='active')return;
+      const update:Record<string,unknown>={
+       workingUntil:0,updatedAt:FieldValue.serverTimestamp()
+      };
+      if(current.get('transcriptConsent')===true){
+       update.transcript=FieldValue.arrayUnion(
+        {role:'user',text:message,turn},
+        {role:'character',text:response.reply,source:response.source,turn}
+       );
+      }
       tx.update(ref,update);
     });
    }catch(e){
@@ -269,13 +271,27 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    const answers=clean.filter(x=>x.role==='user').map(x=>x.text);
    const review=await aiReview(challenge,answers);
    const duration=Math.min(1200,Math.max(0,input.durationSeconds??0));
-   const patch:Record<string,unknown>={
-    status:'completed',durationSeconds:duration,review,updatedAt:FieldValue.serverTimestamp(),
-    workingUntil:0,finishedAt:FieldValue.serverTimestamp()
-   };
-   if(snap.get('transcriptConsent')===true)patch.transcript=Array.isArray(recorded)?recorded:clean;
-   await ref.update(patch);
-   return res.status(200).json({sessionId:id,review});
+   let finalReview=review;
+   await store.runTransaction(async tx=>{
+    const current=await tx.get(ref);
+    if(!current.exists)throw new Error('Session not found.');
+    if(current.get('status')==='completed'){
+     finalReview=current.get('review')??review;
+     return;
+    }
+    if(current.get('status')!=='active')throw new Error('This workout has already ended.');
+    const patch:Record<string,unknown>={
+     status:'completed',durationSeconds:duration,review,
+     updatedAt:FieldValue.serverTimestamp(),workingUntil:0,
+     finishedAt:FieldValue.serverTimestamp(),pausedAt:0
+    };
+    if(current.get('transcriptConsent')===true){
+     const latest=current.get('transcript');
+     patch.transcript=Array.isArray(latest)?latest:clean;
+    }
+    tx.update(ref,patch);
+   });
+   return res.status(200).json({sessionId:id,review:finalReview});
   }
   return replyError(res,400,'Unsupported action.');
  }catch(e){
