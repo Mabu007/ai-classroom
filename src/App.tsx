@@ -242,9 +242,14 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
       else await studioRef.current?.requestFullscreen();
     } catch { setError('Full screen is unavailable in this browser.'); }
   }
+  async function startLesson() {
+    const started = await doAction('start');
+    // The first click should make Miss Nova teach, not just change a status.
+    if (started) await doAction('step');
+  }
   function teacherAction() {
     if (!room) return;
-    if (room.status === 'scheduled') void doAction('start');
+    if (room.status === 'scheduled') void startLesson();
     else if (room.status === 'paused') void doAction('resume');
     else if (room.status === 'completed') void doAction('restart');
     else void doAction('step');
