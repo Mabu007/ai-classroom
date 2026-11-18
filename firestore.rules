@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function own(uid) { return signedIn() && request.auth.uid == uid; }
+    function member(roomId) { return signedIn() && exists(/databases/$(database)/documents/classrooms/$(roomId)/members/$(request.auth.uid)); }
+    match /users/{uid} {
+      allow read: if own(uid);
+      allow write: if false;
+      match /children/{childId} { allow read: if own(uid); allow write: if false; }
+    }
+    match /classrooms/{roomId} {
+      // Classroom metadata never includes identities, answers or student questions.
+      allow read: if signedIn();
+      allow write: if false;
+      match /members/{uid} { allow read: if own(uid); allow write: if false; }
+      match /events/{eventId} { allow read: if member(roomId); allow write: if false; }
+      match /questions/{questionId} { allow read, write: if false; }
+      match /attempts/{attemptId} { allow read: if own(attemptId); allow write: if false; }
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
