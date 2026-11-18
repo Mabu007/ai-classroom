@@ -18,8 +18,8 @@ export default function Whiteboard({ events, grid = false }: { events: Classroom
     if(!stageId || !actionCount){setRevealCount(Infinity);return;}
     if(lastStageRef.current===stageId) return;
     lastStageRef.current=stageId;
-    setRevealCount(0);
-    let count=0;
+    setRevealCount(1); // the first chalk stroke appears immediately
+    let count=1;
     const interval=window.setInterval(()=>{
       count++;
       setRevealCount(count);
@@ -37,7 +37,7 @@ export default function Whiteboard({ events, grid = false }: { events: Classroom
     api.updateScene({elements});
     if(!elements.length)return;
     // Fit after the complete step rather than re-centering on every stroke.
-    if(revealCount<actionCount)return;
+    if(revealCount !== 1 && revealCount < actionCount)return;
     const frame=window.requestAnimationFrame(()=>{
       try{api.scrollToContent(elements,{fitToViewport:true,viewportZoomFactor:.62,animate:true,duration:350});}
       catch(error){console.warn('Board fitting unavailable:',error instanceof Error?error.name:'unknown');}

@@ -4,7 +4,11 @@ import { teacherStepSchema } from './schema.js';
 
 function textForBoard(text: string, limit = 150) {
   const cleaned = text.replace(/<[^>]*>/g, '').replace(/[{}]/g, '').replace(/\s+/g, ' ').trim();
-  return cleaned.slice(0, limit) || 'Let us look at this question.';
+  const words=cleaned.slice(0,limit).split(' ');
+  const lines: string[]=[];let line='';
+  for(const word of words){if((line+' '+word).trim().length>44&&line){lines.push(line);line=word;}else line=(line+' '+word).trim();}
+  if(line)lines.push(line);
+  return lines.join('\n') || 'Let us look at this question.';
 }
 
 /**
