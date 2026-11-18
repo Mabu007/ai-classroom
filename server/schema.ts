@@ -22,6 +22,8 @@ export const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }),
   z.object({ action: z.literal('snapshot'), roomId: z.string().min(3).max(100) }),
   z.object({ action: z.literal('restart'), roomId: z.string().min(3).max(100) }),
+  z.object({ action: z.literal('skipQuestion'), roomId: z.string().min(3).max(100) }),
+  z.object({ action: z.literal('skipExercise'), roomId: z.string().min(3).max(100) }),
   z.object({ action: z.literal('join'), roomId: z.string().min(3).max(100), childId: z.string().min(3).max(100).optional() }),
   z.object({ action: z.literal('start'), roomId: z.string().min(3).max(100) }),
   z.object({ action: z.literal('step'), roomId: z.string().min(3).max(100) }),

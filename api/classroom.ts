@@ -3,7 +3,8 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { randomUUID, createHash } from 'node:crypto';
 import { adminServices, isAdmin } from '../server/firebase-admin.js';
 import { requestSchema } from '../server/schema.js';
-import { teach, totalStages } from '../server/teacher.js';
+import { answerQuestion } from '../server/teacher.js';
+import { guidedLessonLength, guidedLessonStep, nextGuidedState } from '../server/guided-lesson.mjs';
 import { checkFactorisation } from '../server/assessment.mjs';
 
 const EVENT_LIMIT = 250;
@@ -113,7 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     const member = await membership.get();
     if (!member.exists) return res.status(403).json({ error: 'Join this classroom first.' });
-    const requiresFacilitator = ['start','step','pause','resume','restart'].includes(input.action);
+    const requiresFacilitator = ['start','step','pause','resume','restart','skipQuestion','skipExercise'].includes(input.action);
     if (requiresFacilitator && !(owner || (admin && !practice))) return res.status(403).json({ error: 'Only the classroom facilitator can control the lesson.' });
     if (input.action === 'restart') {
       if (!owner || !practice) return res.status(403).json({ error: 'Only the practice room owner can restart this lesson.' });
@@ -123,7 +124,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const sequence = (current.get('sequence') as number) + 1;
         if (sequence > EVENT_LIMIT) throw new Error('Classroom event limit reached.');
         tx.create(room.collection('events').doc(eventId(sequence)), { sequence, type: 'classroom_reset', payload: { status: 'scheduled' }, createdAt: FieldValue.serverTimestamp() });
-        tx.update(room, { sequence, status: 'scheduled', stage: 0, lease: null, leaseUntil: 0 });
+        tx.update(room, { sequence, status: 'scheduled', stage: 0, epoch: (current.get('epoch') as number ?? 0) + 1, lease: null, leaseUntil: 0 });
       });
       return res.status(200).json({ status: 'scheduled' });
     }
@@ -139,14 +140,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
     if (input.action === 'start') {
-      if (snap.get('status') !== 'scheduled') return res.status(409).json({ error: 'Room is already started.' });
-      await appendEvent('classroom_status', { status: 'teaching' }, 'teaching');
-      return res.status(200).json({ status: 'teaching' });
+      await store.runTransaction(async tx => {
+        const current = await tx.get(room);
+        if (!current.exists) throw new Error('Classroom not found.');
+        if (current.get('status') !== 'scheduled') return; // idempotent double click
+        const sequence = (current.get('sequence') as number ?? 0) + 1;
+        if (sequence > EVENT_LIMIT) throw new Error('Classroom event limit reached.');
+        const step = guidedLessonStep(0);
+        tx.create(room.collection('events').doc(eventId(sequence)), {
+          sequence, type: 'teacher_step', payload: { ...step, stage: 0, origin: 'guided' },
+          createdAt: FieldValue.serverTimestamp()
+        });
+        tx.update(room, { sequence, stage: 1, status: 'teaching', epoch: current.get('epoch') ?? 0 });
+      });
+      return res.status(200).json({ status: 'teaching', started: true });
     }
     if (input.action === 'pause' || input.action === 'resume') {
       const status = input.action === 'pause' ? 'paused' : 'teaching';
-      await appendEvent('classroom_status', { status }, status);
+      await store.runTransaction(async tx => {
+        const current=await tx.get(room);
+        const before=current.get('status') as string;
+        if(input.action==='pause' && !['teaching','awaiting_answer'].includes(before))
+          throw new Error('Pause is available during an active lesson.');
+        if(input.action==='resume' && before!=='paused')
+          throw new Error('The lesson is not paused.');
+        const sequence = (current.get('sequence') as number) + 1;
+        tx.create(room.collection('events').doc(eventId(sequence)), { sequence,type:'classroom_status',payload:{status},createdAt:FieldValue.serverTimestamp() });
+        tx.update(room,{status,sequence, ...(input.action==='pause'?{previousStatus:before}:{previousStatus:null}) });
+      });
       return res.status(200).json({ status });
+    }
+    if (input.action === 'skipQuestion') {
+      const pending=await room.collection('questions').where('status','==','pending').limit(1).get();
+      if(pending.empty)return res.status(200).json({skipped:false});
+      await pending.docs[0].ref.update({status:'deferred'});
+      await appendEvent('question_deferred',{ message:'The unanswered question was deferred. You can continue the lesson.' });
+      return res.status(200).json({skipped:true});
+    }
+    if (input.action === 'skipExercise') {
+      if(snap.get('status')!=='awaiting_answer')return res.status(409).json({error:'No exercise is awaiting an answer.'});
+      await appendEvent('classroom_status',{status:'teaching'},'teaching');
+      return res.status(200).json({status:'teaching'});
     }
     if (input.action === 'ask') {
       const count = await room.collection('questions').where('uid','==',uid).count().get();
@@ -162,12 +196,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (input.action === 'answer') {
       if (snap.get('status') !== 'awaiting_answer') return res.status(409).json({ error: 'No active exercise right now.' });
-      const attempt = room.collection('attempts').doc(uid);
+      const attempt = room.collection('attempts').doc(String(snap.get('epoch') ?? 0) + '_' + uid);
       const correct = checkFactorisation(input.answer);
-      try { await attempt.create({ uid, childId: member.get('childId') ?? null, answer: input.answer, correct, createdAt: FieldValue.serverTimestamp() }); }
-      catch (error) { if ((error as { code?: number }).code === 6) return res.status(409).json({ error: 'You already submitted an answer.' }); throw error; }
-      await appendEvent('answer', { message: 'A learner submitted an exercise.' });
-      return res.status(200).json({ correct, feedback: correct ? 'Correct! The two constants add to 5 and multiply to 6.' : 'Not quite. Look for two numbers that add to 5 and multiply to 6.' });
+      let tries = 0; let alreadyCorrect = false;
+      await store.runTransaction(async tx => {
+        const existing = await tx.get(attempt);
+        tries = Number(existing.get('tries') ?? 0);
+        alreadyCorrect = !!existing.get('correct');
+        if (tries >= 3 || alreadyCorrect) return;
+        tries++;
+        tx.set(attempt, {uid, childId:member.get('childId')??null,answer:input.answer,correct,tries,
+          createdAt:existing.get('createdAt')??FieldValue.serverTimestamp(),
+          updatedAt:FieldValue.serverTimestamp()});
+      });
+      if(alreadyCorrect)return res.status(200).json({correct:true,feedback:'You already completed this exercise.'});
+      if(tries >= 3 && !correct)return res.status(200).json({correct:false,feedback:'Three attempts used. Choose Show solution to continue.'});
+      if(correct){
+        await appendEvent('answer',{message:'An exercise answer was checked.'},'teaching');
+      }
+      return res.status(200).json({
+        correct,
+        feedback: correct
+          ? 'Correct! Two plus three is five, and two times three is six.'
+          : 'Not yet. Choose two numbers that multiply to six and add to five. ' + Math.max(0,3-tries) + ' attempt(s) remain.'
+      });
     }
     if (input.action === 'step') {
       const lease = randomUUID();
@@ -175,34 +227,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let stage = 0;
       await store.runTransaction(async tx => {
         const current = await tx.get(room);
+        if (!current.exists) throw new Error('Classroom not found.');
         const state = current.data()!;
-        if (!['teaching','awaiting_answer'].includes(state.status)) throw new Error('Start or resume this lesson first.');
+        if (state.status === 'awaiting_answer') throw new Error('Answer the exercise or show its solution first.');
+        if (state.status !== 'teaching') throw new Error('Start or resume this lesson first.');
         if (state.leaseUntil && state.leaseUntil > now) throw new Error('A lesson step is already running.');
-        stage = state.stage;
-        if (stage >= totalStages && !state.pendingQuestion) throw new Error('All lesson steps are complete.');
-        tx.update(room, { lease, leaseUntil: now + 45_000 });
+        stage = Number(state.stage ?? 0);
+        if (stage >= guidedLessonLength) throw new Error('All lesson steps are complete.');
+        tx.update(room, { lease, leaseUntil: now + 20_000 });
       });
       try {
-        const waiting = await room.collection('questions').orderBy('createdAt','asc').limit(25).get();
-        const pending = waiting.docs.find(d => d.get('status') === 'pending');
-        const { step, usage } = await teach(Math.min(stage, totalStages - 1), pending?.get('question') as string | undefined);
+        const waiting = await room.collection('questions').where('status','==','pending').limit(1).get();
+        const pending=waiting.docs[0];
+        // Only a real student question calls the model. Core lesson steps are instant and verified.
+        const outcome = pending
+          ? await answerQuestion(String(pending.get('question') ?? '').slice(0,400))
+          : { step: guidedLessonStep(stage), usage:{ totalTokens:0 }, origin:'guided' as const };
         await store.runTransaction(async tx => {
           const current = await tx.get(room);
           if (!current.exists || current.get('lease') !== lease) throw new Error('Lesson controller lease expired.');
-          const sequence = (current.get('sequence') as number) + 1;
+          const sequence = Number(current.get('sequence') ?? 0) + 1;
           if (sequence > EVENT_LIMIT) throw new Error('Classroom event limit reached.');
-          const nextStage = pending ? stage : Math.min(stage + 1, totalStages);
-          const status = pending ? current.get('status') as string : stage === 3 ? 'awaiting_answer' : nextStage >= totalStages ? 'completed' : 'teaching';
-          tx.create(room.collection('events').doc(eventId(sequence)), { sequence, type: 'teacher_step', payload: { ...step, stage, answeredQuestion: !!pending }, createdAt: FieldValue.serverTimestamp() });
-          tx.update(room, { sequence, status, stage: nextStage, lease: null, leaseUntil: 0, tokensUsed: FieldValue.increment((usage as {totalTokens?:number}).totalTokens ?? 0) });
-          if (pending) tx.update(pending.ref, { status: 'answered' });
+          const progress = pending
+            ? { stage, status:'teaching' }
+            : nextGuidedState(stage);
+          tx.create(room.collection('events').doc(eventId(sequence)), {
+            sequence, type:'teacher_step', payload:{ ...outcome.step, stage, origin:outcome.origin, answeredQuestion:!!pending },
+            createdAt:FieldValue.serverTimestamp()
+          });
+          tx.update(room, {
+            sequence,stage:progress.stage,status:progress.status,lease:null,leaseUntil:0,
+            tokensUsed:FieldValue.increment((outcome.usage as {totalTokens?:number}).totalTokens ?? 0)
+          });
+          if(pending)tx.update(pending.ref,{status:'answered'});
         });
-        return res.status(200).json({ success: true });
-      } catch (err) {
+        return res.status(200).json({success:true,source:outcome.origin});
+      } catch(err){
         await store.runTransaction(async tx => {
-          const current = await tx.get(room);
-          if (current.exists && current.get('lease') === lease) tx.update(room, { lease: null, leaseUntil: 0 });
-        }).catch(() => {});
+          const current=await tx.get(room);
+          if(current.exists && current.get('lease')===lease)tx.update(room,{lease:null,leaseUntil:0});
+        }).catch(()=>{});
         throw err;
       }
     }
@@ -210,7 +274,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (error) {
     console.error('Classroom operation failed:', error);
     const message = error instanceof Error ? error.message : 'Unexpected server error.';
-    const safe = /^(Authentication|Sign in|Administrator|Join this|Select a child|Room|Start|A lesson|All lesson|Classroom|Teaching engine|No active|This parent|You already|Question limit)/.test(message);
+    const safe = /^(Authentication|Sign in|Administrator|Join this|Select a child|Room|Start|A lesson|All lesson|Classroom|AI teacher|No active|No exercise|Answer the exercise|Pause is|The lesson is|Only|This parent|You already|Question limit)/.test(message);
     return res.status(400).json({ error: safe ? message : 'Could not complete this action. Check server configuration and logs.' });
   }
 }
