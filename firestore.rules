@@ -1,23 +1,28 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function own(uid) { return signedIn() && request.auth.uid == uid; }
-    function member(roomId) { return signedIn() && exists(/databases/$(database)/documents/classrooms/$(roomId)/members/$(request.auth.uid)); }
-    match /users/{uid} {
-      allow read: if own(uid);
-      allow write: if false;
-      match /children/{childId} { allow read: if own(uid); allow write: if false; }
-    }
-    match /classrooms/{roomId} {
-      // Classroom metadata never includes identities, answers or student questions.
-      allow read: if signedIn() && (resource.data.mode == 'shared' || resource.data.createdBy == request.auth.uid);
-      allow write: if false;
-      match /members/{uid} { allow read: if own(uid); allow write: if false; }
-      match /events/{eventId} { allow read: if member(roomId); allow write: if false; }
-      match /questions/{questionId} { allow read, write: if false; }
-      match /attempts/{attemptId} { allow read: if own(attemptId); allow write: if false; }
-    }
-    match /{document=**} { allow read, write: if false; }
+ match /databases/{database}/documents {
+  function signedIn(){return request.auth!=null;}
+  function own(uid){return signedIn() && request.auth.uid == uid;}
+  // Speech Gym data is accessed through the authenticated server API only.
+  // The browser cannot directly list, read, update or delete sessions.
+  match /speechGymSessions/{sessionId}{allow read,write:if false;}
+  match /speechGymProfiles/{uid}{allow read,write:if false;}
+  match /speechGymUsage/{uid}{allow read,write:if false;}
+  // Legacy AI Classroom collections are left untouched for migration safety.
+  function member(roomId){return signedIn() && exists(/databases/$(database)/documents/classrooms/$(roomId)/members/$(request.auth.uid));}
+  match /users/{uid}{
+   allow read:if own(uid);
+   allow write:if false;
+   match /children/{childId}{allow read:if own(uid);allow write:if false;}
   }
+  match /classrooms/{roomId}{
+   allow read:if signedIn()&&(resource.data.mode=='shared'||resource.data.createdBy==request.auth.uid);
+   allow write:if false;
+   match /members/{uid}{allow read:if own(uid);allow write:if false;}
+   match /events/{id}{allow read:if member(roomId);allow write:if false;}
+   match /questions/{id}{allow read,write:if false;}
+   match /attempts/{id}{allow read,write:if false;}
+  }
+  match /{document=**}{allow read,write:if false;}
+ }
 }
