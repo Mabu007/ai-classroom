@@ -5,7 +5,7 @@ import { adminServices } from '../server/firebase-admin.js';
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET required.' });
-  const key = process.env.FIREBASE_API_KEY ?? process.env.VITE_FIREBASE_API_KEY;
+  const key = process.env.FIREBASE_API_KEY ?? process.env.VITE_FIREBASE_API_KEY ?? '';
   if (!key) return res.status(503).json({ error: 'Web config unavailable.' });
 
   async function probe(method: 'signUp' | 'signInWithPassword', password: string) {
