@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import {lazy,Suspense,useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import type {FormEvent,ReactNode} from 'react';
 import type {User} from 'firebase/auth';
 import {createUserWithEmailAndPassword,onAuthStateChanged,sendPasswordResetEmail,signInWithEmailAndPassword,signOut} from 'firebase/auth';
@@ -9,8 +9,8 @@ import {newRecognition,recognitionAvailable,playVoice,stopVoice,microphoneError}
 import type {RecognitionInstance} from './lib/speech-voice';
 import {categories,challenges,challengeById} from '../shared/catalog.mjs';
 import type {Challenge} from '../shared/catalog.mjs';
-import Experience from './components/Experience';
-import MySessions from './components/MySessions';
+const Experience=lazy(()=>import('./components/Experience'));
+const MySessions=lazy(()=>import('./components/MySessions'));
 import Artwork from './components/Artwork';
 import type {Review,Session,Profile} from './lib/speech-types';
 
@@ -209,11 +209,13 @@ export default function App(){
  if(!authReady)return <div className="sg-boot"><Logo/><span>PREPARING YOUR TRAINING FLOOR…</span></div>;
  if(!user)return <AuthScreen theme={theme} toggleTheme={toggleTheme}/>;
  const challenge=route.id?challengeById(route.id):null;
- if(route.page==='experience'&&challenge)return <Experience
+ if(route.page==='experience'&&challenge)return <Suspense fallback={<div className="sg-boot"><Logo/><span>PREPARING YOUR EXPERIENCE…</span></div>}>
+  <Experience
   key={challenge.id+'-'+runNonce} challenge={challenge}
   adultConfirmed={!!profile?.adultConfirmed} defaultSaveTranscript={profile?.transcriptConsent??true}
   onConfirmAdult={confirmAdult} onComplete={afterWorkout}
-  onRetry={()=>setRunNonce(n=>n+1)} onHome={()=>navigate('/explore')}/>;
+  onRetry={()=>setRunNonce(n=>n+1)} onHome={()=>navigate('/explore')}/>
+ </Suspense>;
  return <div className="sg-app"><header className="sg-header"><button className="sg-logo-button" onClick={()=>navigate('/explore')} aria-label="Go to Explore"><Logo/></button>
   <nav className="sg-nav" aria-label="Main navigation">
    <button className={route.page==='explore'?'active':''} onClick={()=>navigate('/explore')}>Explore</button>
@@ -230,8 +232,8 @@ export default function App(){
   </div>
  </header>
  {route.page==='explore'?<Explore sessions={sessions} onStart={start}/>:
-  route.page==='sessions'||route.page==='review'?<MySessions
-    sessions={sessions} onRetry={start} onDelete={deleteSession} onRefresh={()=>navigate('/explore')} onHistoryChange={load}/>:
+  route.page==='sessions'||route.page==='review'?<Suspense fallback={<div className="sg-content-page">Loading your sessions…</div>}><MySessions
+    sessions={sessions} onRetry={start} onDelete={deleteSession} onRefresh={()=>navigate('/explore')} onHistoryChange={load}/></Suspense>:
   route.page==='profile'?<ProfilePage user={user} profile={profile} sessions={sessions}
     onConfirm={confirmAdult} onDeleteHistory={deleteHistory}
     onDeleteAccount={deleteAccount} onTranscriptPreference={saveTranscriptPreference}
