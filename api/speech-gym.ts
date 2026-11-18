@@ -236,7 +236,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
     turn=count+1;
     tx.update(ref,{turnsCount:turn,workingUntil:now()+17000,updatedAt:FieldValue.serverTimestamp()});
    });
-   let response;
+   let response: Awaited<ReturnType<typeof characterResponse>>;
    try{
     const history=sanitizeConversation(input.history);
     response=await characterResponse(challenge,history,message,turn-1);
