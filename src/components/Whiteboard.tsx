@@ -24,7 +24,7 @@ export default function Whiteboard({ events, grid = false }: { events: Classroom
       count++;
       setRevealCount(count);
       if(count>=actionCount)window.clearInterval(interval);
-    },780);
+    },Math.max(700,Math.min(3400,Math.round(Math.min(18000,Math.max(6000,String(stageEvent?.payload.speech ?? '').length*65))/Math.max(1,actionCount)))));
     return ()=>window.clearInterval(interval);
   },[stageId,actionCount]);
   const key=events.filter(e=>e.type==='teacher_step'||e.type==='classroom_reset').map(e=>e.id).join(',');

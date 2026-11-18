@@ -45,11 +45,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const membership = room.collection('members').doc(uid);
       await store.runTransaction(async tx => {
         const existing = await tx.get(room);
+        const member = await tx.get(membership);
         if (!existing.exists) {
-          tx.create(room, { title: 'My maths studio', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', mode: 'practice', stage: 0, sequence: 0, memberCount: 1, createdAt: FieldValue.serverTimestamp(), createdBy: uid });
-          tx.create(membership, { role: 'facilitator', joinedAt: FieldValue.serverTimestamp() });
+          tx.create(room, { title: 'My maths studio', subject: 'Mathematics', topic: 'Factorisation', grade: 10, status: 'scheduled', mode: 'practice', stage: 0, sequence: 0, memberCount: 1, epoch: 0, createdAt: FieldValue.serverTimestamp(), createdBy: uid });
+          if (!member.exists) tx.create(membership, { role: 'facilitator', joinedAt: FieldValue.serverTimestamp() });
         } else if (existing.get('createdBy') !== uid || existing.get('mode') !== 'practice') {
           throw new Error('Practice classroom unavailable.');
+        } else if (!member.exists) {
+          tx.create(membership, { role: 'facilitator', joinedAt: FieldValue.serverTimestamp() });
+          tx.update(room, { memberCount: 1 });
         }
       });
       return res.status(200).json({ roomId: room.id });
@@ -156,7 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'teaching', started: true });
     }
     if (input.action === 'pause' || input.action === 'resume') {
-      const status = input.action === 'pause' ? 'paused' : 'teaching';
+      let status='teaching';
       await store.runTransaction(async tx => {
         const current=await tx.get(room);
         const before=current.get('status') as string;
@@ -164,6 +168,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           throw new Error('Pause is available during an active lesson.');
         if(input.action==='resume' && before!=='paused')
           throw new Error('The lesson is not paused.');
+        status=input.action==='pause'?'paused':
+          current.get('previousStatus')==='awaiting_answer'?'awaiting_answer':'teaching';
         const sequence = (current.get('sequence') as number) + 1;
         tx.create(room.collection('events').doc(eventId(sequence)), { sequence,type:'classroom_status',payload:{status},createdAt:FieldValue.serverTimestamp() });
         tx.update(room,{status,sequence, ...(input.action==='pause'?{previousStatus:before}:{previousStatus:null}) });
