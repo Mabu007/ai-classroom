@@ -8,7 +8,7 @@ import { challengeById } from '../shared/catalog.mjs';
 import { sanitizeConversation, guidedFollowUp, deterministicReview, validateAIReview } from '../server/speech-coach.mjs';
 
 const requestSchema=z.object({
- action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','finish','list','deleteSession','deleteHistory','deleteAccount']),
+ action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','finish','abandon','list','deleteSession','deleteHistory','deleteAccount']),
  challengeId:z.string().min(3).max(100).optional(),
  sessionId:z.string().min(5).max(128).optional(),
  text:z.string().trim().max(1500).optional(),
@@ -182,6 +182,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
   const started=toMillis(snap.get('startedAt'));
   if(started && now()-started>18*60*1000 && input.action==='turn')
    return replyError(res,409,'This session expired. Finish your workout and review it.');
+  if(input.action==='abandon'){
+   await ref.update({status:'abandoned',workingUntil:0,updatedAt:FieldValue.serverTimestamp()});
+   return res.status(200).json({abandoned:true});
+  }
   if(input.action==='turn'){
    const message=input.text?.trim()??'';
    if(!message)return replyError(res,400,'Please speak or type a response first.');

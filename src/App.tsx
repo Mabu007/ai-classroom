@@ -182,7 +182,9 @@ function Experience({challenge,adultConfirmed,transcriptConsent,onConfirmAdult,o
   setMicLevel(0);
  },[]);
  const cancelCapture=useCallback(()=>{
-  recognitionRef.current?.abort();recognitionRef.current=null;stopMicrophone();
+  const r=recognitionRef.current;
+  if(r){r.onresult=null;r.onerror=null;r.onend=null;r.abort();}
+  recognitionRef.current=null;stopMicrophone();
  },[stopMicrophone]);
  const finish=useCallback(async()=>{
   if(finishingRef.current)return;
@@ -311,16 +313,21 @@ function Experience({challenge,adultConfirmed,transcriptConsent,onConfirmAdult,o
  function stopListening(){
   autoRef.current=false;recognitionRef.current?.stop();setPhase('ready');
  }
- const canSpeak=phase==='ready'||phase==='speaking'||phase==='error';
+ async function leaveExperience(){
+  closedRef.current=true;autoRef.current=false;cancelCapture();stopVoice();
+  const id=sessionRef.current;
+  if(id)await gymApi('abandon',{sessionId:id}).catch(()=>{});
+  onBack();
+ }
  const characterName=challenge.archetype.split(' — ')[0];
  return <main className="sg-experience" style={{'--accent':challenge.accent} as React.CSSProperties}>
   <Artwork challenge={challenge} hero/>
   <div className="sg-experience-vignette"/>
   <div className="sg-experience-top">
-   <button className="sg-back-round" onClick={()=>{closedRef.current=true;onBack();}} aria-label="Leave experience"><ArrowLeft size={21}/></button>
+   <button className="sg-back-round" onClick={()=>void leaveExperience()} aria-label="Leave experience"><ArrowLeft size={21}/></button>
    <div className="sg-experience-title"><span>NOW TRAINING</span><strong>{challenge.title}</strong></div>
    <span className="sg-experience-timer"><Clock3 size={15}/> {formatDuration(elapsed)}</span>
-   <button className="sg-end-button" disabled={phase==='reviewing'} onClick={()=>void latestFinish.current()}><Square size={13} fill="currentColor"/> End & review</button>
+   <button className="sg-end-button" disabled={phase==='reviewing'||!sessionRef.current} onClick={()=>void latestFinish.current()}><Square size={13} fill="currentColor"/> End & review</button>
   </div>
   <div className="sg-experience-center">
    <div className="sg-scene-eyebrow"><span className="sg-red-dot"/>{challenge.category.toUpperCase().replace('-',' ')} / IMMERSIVE EXPERIENCE</div>
@@ -340,7 +347,7 @@ function Experience({challenge,adultConfirmed,transcriptConsent,onConfirmAdult,o
    <button className={'sg-circle-button '+(muted?'sg-muted':'')} aria-label={muted?'Enable character voice':'Mute character voice'} onClick={()=>{setMuted(!muted);if(!muted)stopVoice();}}>{muted?<VolumeX size={21}/>:<Volume2 size={21}/>}</button>
    <button className={'sg-mic-button '+(phase==='listening'?'active':'')} disabled={phase==='thinking'||phase==='reviewing'||phase==='opening'||!sessionRef.current} onClick={()=>phase==='listening'?stopListening():void latestListen.current()} aria-label={phase==='listening'?'Finish speaking':'Start speaking'}>{phase==='listening'?<Square size={25} fill="currentColor"/>:<Mic size={31}/>}<span>{phase==='listening'?'FINISH SPEAKING':'TAP TO SPEAK'}</span></button>
    <button className="sg-circle-button" onClick={speakAgain} title="Repeat the character" aria-label="Replay character"><RotateCcw size={20}/></button>
-   <button className="sg-circle-button" onClick={()=>{setTypeMode(!typeMode);setError('');}} aria-label="Type instead" title="Type instead"><Menu size={20}/></button>
+   <button className="sg-circle-button" onClick={()=>{cancelCapture();setPhase('ready');setTypeMode(!typeMode);setError('');}} aria-label="Type instead" title="Type instead"><Menu size={20}/></button>
   </div>
   {typeMode&&<form className="sg-type-tray" onSubmit={submitTyped}><input value={typed} maxLength={1500} autoFocus placeholder="Type your response instead…" onChange={e=>setTyped(e.target.value)}/><button disabled={!typed.trim()||phase==='thinking'||phase==='reviewing'} aria-label="Send your answer"><Send size={21}/></button></form>}
   <div className="sg-experience-footer"><span>REP {Math.min(turns+1,challenge.maxTurns)} OF {challenge.maxTurns}</span><div className="sg-rep-progress">{Array.from({length:challenge.maxTurns},(_,i)=><span key={i} className={i<turns?'done':''}/>)}</div><span>PRIVATE SESSION · NO AUDIO SAVED</span></div>
