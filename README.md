@@ -6,6 +6,28 @@ Speech Gym is a private, adult-only speaking practice app, replacing the previou
 
 **Production:** https://official-ai-classroom.vercel.app (legacy hostname until a Speech Gym domain is configured).
 
+## Updated one-click training journey (v0.3)
+
+1. Explore → choose a curated challenge. A pre-session modal appears immediately; no workout record is created yet.
+2. Read the objective, character details, microphone disclosure and training instructions. Check **Save this session's transcript** if you want an accessible record in My Sessions; the checkbox is visible and can be changed on every attempt. Raw audio is never stored by Speech Gym.
+3. Press **Start Experience**. The app creates a private Firestore session, introduces the character and invites spoken or typed replies.
+4. Use **Pause / Play** at the top of the scene. Pausing stops local speech synthesis, microphone capture and the active-time counter. Server-side pause state ensures idle time does not count toward the 20-minute active workout limit. Resume uses ordered backend updates to avoid quick-toggle races.
+5. The training stage has a separate scrollable dialogue area above the control dock, avoiding the previous caption/microphone overlap on small screens.
+6. Press **End & review** at any point. A loading overlay then an in-place coaching popup displays strengths, improvements and the next exercise. **Retry challenge** opens a fresh rep; **Go home** returns to Explore.
+7. **My Sessions** groups attempts under their challenge. Open **View resources** for each attempt to see the full opt-in transcript, coaching notes and session metadata. Copy/download the transcript, delete just that transcript, or delete the entire attempt.
+8. Switch **dark/light appearance** from the header or Profile. The chosen mode persists locally. On mobile, Explore / Sessions / Profile are already in bottom tabs, so there is no duplicate hamburger menu.
+
+### Privacy details
+
+Transcript persistence is chosen explicitly in the pre-session modal (and the default for new sessions can be set in Profile). Older opt-out sessions do not have reconstructable transcripts; the app accurately explains that. Deleting a transcript does not delete the session's coaching notes and statistics. The backend verifies the authenticated owner for every transcript request and rechecks consent inside Firestore transactions to prevent late AI responses or review saves from recreating a deleted transcript.
+
+### Test & production status
+
+- Node regression tests cover catalogue validity, grounded feedback, transcript grouping and the pausable workout clock.
+- Vercel builds require passing Node tests and both frontend/backend TypeScript checks before Vite bundles.
+- The production URL remains https://official-ai-classroom.vercel.app until a Speech Gym domain is configured.
+- **Still unverified:** a complete real-browser, authenticated microphone-to-AI-to-review journey on multiple devices. Browser support and voice-provider behavior vary; test permissions, transcription and actual audio playback on your device before declaring the voice experience production-verified.
+
 ## Experience
 
 1. Sign in or register, and confirm you are 18 or older.
