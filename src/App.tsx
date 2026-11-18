@@ -213,8 +213,19 @@ export default function App(){
   onConfirmAdult={confirmAdult} onComplete={afterWorkout}
   onRetry={()=>setRunNonce(n=>n+1)} onHome={()=>navigate('/explore')}/>;
  return <div className="sg-app"><header className="sg-header"><button className="sg-logo-button" onClick={()=>navigate('/explore')} aria-label="Go to Explore"><Logo/></button>
-  <nav className={'sg-nav '+(mobileNav?'open':'')} aria-label="Main"><button className={route.page==='explore'?'active':''} onClick={()=>navigate('/explore')}>Explore</button><button className={route.page==='sessions'?'active':''} onClick={()=>navigate('/sessions')}>My Sessions</button><button className={route.page==='profile'?'active':''} onClick={()=>navigate('/profile')}>Profile</button></nav>
-  <div className="sg-header-right"><span className="sg-header-reps"><AudioLines size={16}/> {sessions.filter(s=>s.status==='completed').length} reps</span><button className="sg-user-avatar" title={user.email??'Account'} onClick={()=>navigate('/profile')}>{user.email?.charAt(0).toUpperCase()}</button><button className="sg-sign-out" title="Sign out" aria-label="Sign out" onClick={()=>void signOut(auth)}><LogOut size={19}/></button><button className="sg-mobile-toggle" onClick={()=>setMobileNav(!mobileNav)} aria-label="Open menu">{mobileNav?<X size={22}/>:<Menu size={22}/>}</button></div>
+  <nav className="sg-nav" aria-label="Main navigation">
+   <button className={route.page==='explore'?'active':''} onClick={()=>navigate('/explore')}>Explore</button>
+   <button className={route.page==='sessions'?'active':''} onClick={()=>navigate('/sessions')}>My Sessions</button>
+   <button className={route.page==='profile'?'active':''} onClick={()=>navigate('/profile')}>Profile</button>
+  </nav>
+  <div className="sg-header-right">
+   <span className="sg-header-reps"><AudioLines size={16}/> {sessions.filter(s=>s.status==='completed').length} reps</span>
+   <button className="sg-theme-switch" onClick={toggleTheme} aria-label={theme==='dark'?'Switch to light mode':'Switch to dark mode'} title={theme==='dark'?'Light mode':'Dark mode'}>
+    {theme==='dark'?<Sun size={20}/>:<Moon size={20}/>}
+   </button>
+   <button className="sg-user-avatar" title={user.email??'Account'} onClick={()=>navigate('/profile')}>{user.email?.charAt(0).toUpperCase()}</button>
+   <button className="sg-sign-out" title="Sign out" aria-label="Sign out" onClick={()=>void signOut(auth)}><LogOut size={19}/></button>
+  </div>
  </header>
  {route.page==='explore'?<Explore sessions={sessions} onStart={start}/>:
   route.page==='sessions'||route.page==='review'?<MySessions
