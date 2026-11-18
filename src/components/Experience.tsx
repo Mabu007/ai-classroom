@@ -327,7 +327,11 @@ export default function Experience({
   },1000);
   return()=>window.clearInterval(timer);
  },[]);
- useEffect(()=>()=>{
+ useEffect(()=>{
+  // React StrictMode mounts effects twice in development. Reset both guards
+  // on each setup; otherwise the first cleanup permanently blocks start.
+  mountedRef.current=true;closedRef.current=false;
+  return()=>{
   mountedRef.current=false;closedRef.current=true;
   const r=recognitionRef.current;
   if(r){r.onend=null;r.onresult=null;r.onerror=null;try{r.abort();}catch{}}
@@ -335,6 +339,7 @@ export default function Experience({
   if(rafRef.current!==null)cancelAnimationFrame(rafRef.current);
   if(audioContextRef.current)void audioContextRef.current.close().catch(()=>{});
   speechSerial.current++;stopVoice();
+  };
  },[]);
  useEffect(()=>{
   const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&instructions&&!starting)onHome();};
