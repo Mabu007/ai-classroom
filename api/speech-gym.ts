@@ -8,7 +8,7 @@ import { challengeById } from '../shared/catalog.mjs';
 import { sanitizeConversation, guidedFollowUp, deterministicReview, validateAIReview } from '../server/speech-coach.mjs';
 
 const requestSchema=z.object({
- action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','finish','abandon','list','sessionDetail','deleteTranscript','deleteSession','deleteHistory','deleteAccount']),
+ action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','pause','resume','finish','abandon','list','sessionDetail','deleteTranscript','deleteSession','deleteHistory','deleteAccount']),
  challengeId:z.string().min(3).max(100).optional(),
  sessionId:z.string().min(5).max(128).optional(),
  text:z.string().trim().max(1500).optional(),
@@ -125,7 +125,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
     tx.create(doc,{
      uid,challengeId:challenge.id,challengeVersion:challenge.version,category:challenge.category,
      status:'active',turnsCount:0,startedAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp(),
-     workingUntil:0,transcriptConsent:input.transcriptConsent===true,
+     workingUntil:0,pausedAt:0,accumulatedPausedMs:0,transcriptConsent:input.transcriptConsent===true,
      ...(input.transcriptConsent===true?{transcript:[{role:'character',text:challenge.opening,source:'opening',turn:0}]}:{}),
      durationSeconds:0,voiceProvider:'browser-native',modelProvider:'openrouter-on-request'
     });
@@ -138,6 +138,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
     const v=d.data();
     return {id:d.id,challengeId:v.challengeId,challengeVersion:v.challengeVersion,status:v.status,
       turnsCount:v.turnsCount??0,durationSeconds:v.durationSeconds??0,review:v.review??null,
+      paused:Number(v.pausedAt??0)>0,
       startedAt:toMillis(v.startedAt),updatedAt:toMillis(v.updatedAt),transcriptConsent:v.transcriptConsent===true,
       hasTranscript:Array.isArray(v.transcript) && v.transcript.length>0};
    }).sort((a,b)=>b.startedAt-a.startedAt);
@@ -174,6 +175,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    return res.status(200).json({session:{
      id:ref.id,challengeId:snap.get('challengeId'),challengeVersion:snap.get('challengeVersion'),
      status:snap.get('status'),turnsCount:snap.get('turnsCount')??0,durationSeconds:snap.get('durationSeconds')??0,
+     paused:Number(snap.get('pausedAt')??0)>0,
      review:snap.get('review')??null,transcriptConsent:snap.get('transcriptConsent')===true,
      transcript:Array.isArray(transcript)?transcript:[],startedAt:toMillis(snap.get('startedAt'))
    }});
@@ -190,12 +192,32 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    if(input.action==='finish'&&snap.get('status')==='completed')return res.status(200).json({review:snap.get('review'),sessionId:id});
    return replyError(res,409,'This workout has already ended.');
   }
+  if(input.action==='pause'||input.action==='resume'){
+   let paused=false;
+   await store.runTransaction(async tx=>{
+    const fresh=await tx.get(ref);
+    if(!fresh.exists||fresh.get('status')!=='active')throw new Error('This workout has already ended.');
+    const previous=Number(fresh.get('pausedAt')??0);
+    if(input.action==='pause'){
+     if(previous>0){paused=true;return;}
+     tx.update(ref,{pausedAt:now(),updatedAt:FieldValue.serverTimestamp()});paused=true;
+    }else if(previous>0){
+     tx.update(ref,{pausedAt:0,
+      accumulatedPausedMs:Math.max(0,Number(fresh.get('accumulatedPausedMs')??0))+Math.max(0,now()-previous),
+      updatedAt:FieldValue.serverTimestamp()});
+    }
+   });
+   return res.status(200).json({paused});
+  }
   const challenge=challengeById(String(snap.get('challengeId')??''));
   if(!challenge || Number(snap.get('challengeVersion')??0)!==challenge.version)
    return replyError(res,409,'This challenge version is no longer available. Start a new workout.');
   const started=toMillis(snap.get('startedAt'));
-  if(started && now()-started>18*60*1000 && input.action==='turn')
-   return replyError(res,409,'This session expired. Finish your workout and review it.');
+  const pausedTime=Math.max(0,Number(snap.get('accumulatedPausedMs')??0));
+  const currentPause=Number(snap.get('pausedAt')??0);
+  const effectiveActiveMs=started?now()-started-pausedTime-(currentPause>0?Math.max(0,now()-currentPause):0):0;
+  if(started && effectiveActiveMs>20*60*1000 && input.action==='turn')
+   return replyError(res,409,'This session reached its active time limit. Finish for your review.');
   if(input.action==='abandon'){
    await ref.update({status:'abandoned',workingUntil:0,updatedAt:FieldValue.serverTimestamp()});
    return res.status(200).json({abandoned:true});
@@ -207,6 +229,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    await store.runTransaction(async tx=>{
     const fresh=await tx.get(ref);
     if(!fresh.exists||fresh.get('status')!=='active')throw new Error('This workout has ended.');
+    if(Number(fresh.get('pausedAt')??0)>0)throw new Error('This workout is paused. Press play to resume.');
     if(Number(fresh.get('workingUntil')??0)>now())throw new Error('A response is already in progress.');
     const count=Number(fresh.get('turnsCount')??0);
     if(count>=challenge.maxTurns)throw new Error('This challenge is complete. Open your review.');
