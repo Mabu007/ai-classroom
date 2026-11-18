@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { User } from 'firebase/auth';
-import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, doc, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { BookOpen, Brain, ArrowRight, ChevronRight, GraduationCap, Users, CalendarDays, Sparkles, Volume2, VolumeX, Mic, MessageCircle, Hand, Play, Pause, Send, CheckCircle2, AlertCircle, Plus, LogOut, Menu, X, ShieldCheck, Clock3, Zap, LayoutDashboard } from 'lucide-react';
 import katex from 'katex';
@@ -23,20 +23,50 @@ function Logo() { return <div className="brand"><span className="brand-icon"><Bo
 function Btn({ children, onClick, variant = 'primary', disabled = false, className = '' }: { children: React.ReactNode; onClick: () => void; variant?: 'primary' | 'secondary' | 'ghost'; disabled?: boolean; className?: string }) { return <button className={`btn ${variant} ${className}`} onClick={onClick} disabled={disabled}>{children}</button>; }
 function Banner({ message, type = 'error', onClose }: {message: string; type?: 'error'|'info'; onClose?: () => void}) { return <div className={`notice ${type}`}><AlertCircle size={17}/><span>{message}</span>{onClose && <button onClick={onClose} aria-label="Dismiss"><X size={16}/></button>}</div>; }
 
+
+function authErrorMessage(error: unknown): string {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code: unknown }).code) : '';
+  switch (code) {
+    case 'auth/email-already-in-use': return 'This email already has an account. Please sign in instead.';
+    case 'auth/invalid-email': return 'Enter a valid email address.';
+    case 'auth/weak-password': return 'Choose a stronger password (at least 6 characters).';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found': return 'Incorrect email or password. Please try again.';
+    case 'auth/operation-not-allowed': return 'Email/password sign-in must be enabled in Firebase Authentication.';
+    case 'auth/unauthorized-domain': return 'This website must be added to Firebase Authentication authorized domains.';
+    case 'auth/network-request-failed': return 'Network error. Check your connection and try again.';
+    case 'auth/too-many-requests': return 'Too many attempts. Please try again later.';
+    default: return 'Unable to complete this request. Please try again.';
+  }
+}
+
 function AuthScreen() {
   const [register, setRegister] = useState(false);
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [info, setInfo] = useState('');
   async function submit(e: React.FormEvent) {
-    e.preventDefault(); setLoading(true); setError('');
+    e.preventDefault(); setLoading(true); setError(''); setInfo('');
     try { if (register) await createUserWithEmailAndPassword(auth, email, password); else await signInWithEmailAndPassword(auth, email, password); }
-    catch(err) { setError(err instanceof Error ? err.message : 'Could not sign in.'); }
+    catch(err) { setError(authErrorMessage(err)); }
+    finally { setLoading(false); }
+  }
+
+  async function resetPassword() {
+    setError(''); setInfo('');
+    if (!email.trim()) { setError('Enter your email address above before resetting your password.'); return; }
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setInfo('If this email has an account, you will receive a password-reset link.');
+    } catch (err) { setError(authErrorMessage(err)); }
     finally { setLoading(false); }
   }
   return <div className="public-site"><header className="public-nav shell"><Logo/><span className="nav-note"><span className="online-dot"/> A new way to learn</span></header>
     <div className="hero shell"><div className="hero-copy"><div className="eyebrow"><Sparkles size={15}/> THE FUTURE OF LEARNING IS HERE</div><h1>A classroom that <em>comes alive.</em></h1><p>Meet your AI teacher. Watch lessons unfold on a live whiteboard, ask questions in real time, and discover what you’re capable of.</p><div className="hero-features"><span><CheckCircle2 size={17}/> Interactive lessons</span><span><CheckCircle2 size={17}/> Learn together</span><span><CheckCircle2 size={17}/> Personal guidance</span></div><div className="hero-testimonial">Designed for Grade 10 Mathematics. Built for curious minds.</div></div>
-      <div className="auth-card"><div className="auth-overline"><span className="feature-icon"><GraduationCap size={22}/></span><span>YOUR LEARNING JOURNEY</span></div><h2>{register ? 'Create your account' : 'Welcome to class'}</h2><p>{register ? 'Parents and guardians can create an account and manage learner profiles.' : 'Sign in to join your next interactive lesson.'}</p>{!configured && <Banner message="Firebase is not configured yet. Add the VITE_FIREBASE_* environment variables."/>}{error && <Banner message={error} onClose={() => setError('')}/>}
-        <form onSubmit={submit}><label>Email address<input type="email" placeholder="you@example.com" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)}/></label><label>Password<input type="password" minLength={6} placeholder="Enter your password" autoComplete={register ? 'new-password' : 'current-password'} required value={password} onChange={e=>setPassword(e.target.value)}/></label><button type="submit" className="btn primary full" disabled={!configured||loading}>{loading ? 'Please wait…' : register ? 'Create account' : 'Enter classroom'} <ArrowRight size={17}/></button></form><div className="auth-switch">{register ? 'Already have an account?' : 'New here?'} <button onClick={() => {setRegister(!register);setError('');}}>{register ? 'Sign in' : 'Create an account'}</button></div><div className="auth-footer"><ShieldCheck size={16}/> A safe, parent-managed learning environment</div></div>
+      <div className="auth-card"><div className="auth-overline"><span className="feature-icon"><GraduationCap size={22}/></span><span>YOUR LEARNING JOURNEY</span></div><h2>{register ? 'Create your account' : 'Welcome to class'}</h2><p>{register ? 'Parents and guardians can create an account and manage learner profiles.' : 'Sign in to join your next interactive lesson.'}</p>{!configured && <Banner message="Firebase is not configured yet. Add the VITE_FIREBASE_* environment variables."/>}{error && <Banner message={error} onClose={() => setError('')}/>}{info && <Banner type="info" message={info} onClose={() => setInfo('')}/>}
+        <form onSubmit={submit}><label>Email address<input type="email" placeholder="you@example.com" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)}/></label><label>Password<input type="password" minLength={6} placeholder="Enter your password" autoComplete={register ? 'new-password' : 'current-password'} required value={password} onChange={e=>setPassword(e.target.value)}/></label><button type="submit" className="btn primary full" disabled={!configured||loading}>{loading ? 'Please wait…' : register ? 'Create account' : 'Enter classroom'} <ArrowRight size={17}/></button></form><div className="auth-switch">{register ? 'Already have an account?' : 'New here?'} <button onClick={() => {setRegister(!register);setError('');}}>{register ? 'Sign in' : 'Create an account'}</button></div>{!register && <div className="auth-switch"><button type="button" onClick={() => void resetPassword()} disabled={loading}>Forgot password?</button></div>}<div className="auth-footer"><ShieldCheck size={16}/> A safe, parent-managed learning environment</div></div>
     </div><section className="feature-strip shell"><div><span><Users size={21}/></span><strong>One shared classroom</strong><small>Learn together in real time</small></div><div><span><Brain size={21}/></span><strong>Intelligent explanations</strong><small>Ask when you need help</small></div><div><span><BookOpen size={21}/></span><strong>See ideas take shape</strong><small>Interactive visual learning</small></div></section></div>;
 }
 function useRooms(uid?: string) {

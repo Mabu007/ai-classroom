@@ -78,3 +78,31 @@ npm run build
 ```
 
 No automatic deployment or paid service usage is performed by this repository.
+
+
+## Vercel environment variables and signup
+
+The Vercel app may use server-only variables FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN,
+FIREBASE_APP_ID and FIREBASE_CLIENT_EMAIL. The public /api/firebase-config route
+exposes ONLY browser-safe Firebase configuration. The project ID is inferred from
+the standard *.firebaseapp.com auth domain or service-account client email.
+Alternatively, local development may set VITE_FIREBASE_*.
+
+Firebase Admin uses FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL +
+FIREBASE_PRIVATE_KEY (+ optional FIREBASE_PROJECT_ID). Private keys must stay
+server-side. Encrypted/sensitive variables are not readable in browser JavaScript.
+
+1. In Firebase Console, enable **Authentication → Sign-in method → Email/Password**.
+2. Add the production domain to **Authentication → Settings → Authorized domains**.
+3. Create a Cloud Firestore database, and deploy the included firestore.rules.
+4. For classroom administration, configure ADMIN_EMAILS to the verified owner account.
+5. On Vercel, use a public Production deployment; keep Preview protected if desired.
+6. Confirm GET /api/firebase-config returns HTTP 200 (public Firebase web config).
+   Do not share this endpoint's returned API key in support screenshots.
+7. Create a parent account, sign out, sign back in, and use Forgot password to test
+   the email workflow. Do not use real children's data during testing.
+
+Updating Vercel variables normally requires a new production deployment to take
+effect. If registration reports auth/operation-not-allowed, enable Email/Password
+in Firebase Console. If it reports auth/unauthorized-domain, add the Vercel
+production hostname to authorized domains in Firebase Console.
