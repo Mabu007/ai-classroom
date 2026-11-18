@@ -1,19 +1,16 @@
 {
-  "framework": "vite",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/speech-gym.ts": { "maxDuration": 60 },
-    "api/classroom.ts": { "maxDuration": 60 }
-  },
-  "rewrites": [
-    { "source": "/explore", "destination": "/index.html" },
-    { "source": "/sessions", "destination": "/index.html" },
-    { "source": "/profile", "destination": "/index.html" },
-    { "source": "/experience/:id", "destination": "/index.html" },
-    { "source": "/review/:id", "destination": "/index.html" },
-    { "source": "/dashboard", "destination": "/index.html" },
-    { "source": "/classroom/:id", "destination": "/index.html" },
-    { "source": "/admin", "destination": "/index.html" }
-  ]
+ "framework":"vite",
+ "buildCommand":"npm run build",
+ "outputDirectory":"dist",
+ "functions":{"api/speech-gym.ts":{"maxDuration":60}},
+ "rewrites":[
+  {"source":"/explore","destination":"/index.html"},
+  {"source":"/sessions","destination":"/index.html"},
+  {"source":"/profile","destination":"/index.html"},
+  {"source":"/experience/:id","destination":"/index.html"},
+  {"source":"/review/:id","destination":"/index.html"},
+  {"source":"/dashboard","destination":"/index.html"},
+  {"source":"/classroom/:id","destination":"/index.html"},
+  {"source":"/admin","destination":"/index.html"}
+ ]
 }
