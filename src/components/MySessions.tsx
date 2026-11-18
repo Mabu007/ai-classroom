@@ -116,7 +116,7 @@ export default function MySessions({sessions,onRetry,onDelete,onRefresh,onHistor
          {item.hasTranscript&&<span><FileText size={13}/> Transcript saved</span>}
         </div>
        </div>
-       <span className={'sg-attempt-status '+(item.status==='completed'?'completed':'')}>{item.status==='completed'?'Completed':item.status==='abandoned'?'Exited early':Date.now()-item.startedAt>18*60_000?'Interrupted':'In progress'}</span>
+       <span className={'sg-attempt-status '+(item.status==='completed'?'completed':'')}>{item.status==='completed'?'Completed':item.status==='abandoned'?'Exited early':item.paused?'Paused':Date.now()-item.startedAt>24*60*60_000?'Interrupted':'In progress'}</span>
        <button className="sg-btn sg-btn-outline sg-attempt-view" onClick={()=>void openSession(item)}>
         <BookOpen size={15}/> View resources
        </button>

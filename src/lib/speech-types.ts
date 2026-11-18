@@ -6,7 +6,7 @@ export type TranscriptTurn={role:'user'|'character';text:string;source?:'ai'|'gu
 export type Session={
  id:string;challengeId:string;challengeVersion:number;status:string;turnsCount:number;
  durationSeconds:number;review:Review|null;startedAt:number;updatedAt:number;
- transcriptConsent:boolean;hasTranscript?:boolean;transcript?:TranscriptTurn[];
+ transcriptConsent:boolean;hasTranscript?:boolean;paused?:boolean;transcript?:TranscriptTurn[];
 };
 export type Profile={adultConfirmed?:boolean;transcriptConsent?:boolean}|null;
 export function formatDuration(seconds:number){

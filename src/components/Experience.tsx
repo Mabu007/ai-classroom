@@ -62,6 +62,7 @@ export default function Experience({
  const audioContextRef=useRef<AudioContext|null>(null);
  const rafRef=useRef<number|null>(null);
  const clockRef=useRef(createWorkoutClock());
+ const pauseWritesRef=useRef<Promise<void>>(Promise.resolve());
  const pendingResponseRef=useRef<Reply|null>(null);
  const pendingSpeechDone=useRef<(()=>void)|null>(null);
  const pausedFromRef=useRef<Phase>('ready');
@@ -253,9 +254,23 @@ export default function Experience({
    setError(e instanceof Error?e.message:'Could not start the workout.');
   }
  }
+ function syncPause(action:'pause'|'resume'){
+  const sessionId=sessionRef.current;
+  if(!sessionId)return;
+  // Serialize quick pause/play clicks so a slower server write cannot
+  // leave the session paused after the user has already resumed.
+  pauseWritesRef.current=pauseWritesRef.current
+   .catch(()=>{})
+   .then(async()=>{await gymApi(action,{sessionId});})
+   .catch(e=>{
+    if(!closedRef.current)setNotice(
+     'Pause did not sync with the server: '+(e instanceof Error?e.message:'connection unavailable')
+    );
+   });
+ }
  function pauseSession(){
   if(pauseRef.current||!sessionRef.current||phaseRef.current==='done'||phaseRef.current==='reviewing')return;
-  pauseRef.current=true;setPaused(true);
+  pauseRef.current=true;setPaused(true);syncPause('pause');
   pausedFromRef.current=phaseRef.current;
   clockRef.current.pause();
   if(phaseRef.current==='listening'){
@@ -268,7 +283,7 @@ export default function Experience({
  }
  function resumeSession(){
   if(!pauseRef.current)return;
-  pauseRef.current=false;setPaused(false);
+  pauseRef.current=false;setPaused(false);syncPause('resume');
   clockRef.current.resume();
   if(pendingResponseRef.current){
    const data=pendingResponseRef.current;pendingResponseRef.current=null;
