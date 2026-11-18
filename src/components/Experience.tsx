@@ -66,6 +66,7 @@ export default function Experience({
  const pendingSpeechDone=useRef<(()=>void)|null>(null);
  const pausedFromRef=useRef<Phase>('ready');
  const lastCharacterRef=useRef(challenge.opening);
+ const lastCharacterSourceRef=useRef<Source>('opening');
  const listenRef=useRef<()=>void>(()=>{});
  const turnRef=useRef<(text:string)=>void>(()=>{});
  const finishNowRef=useRef<()=>void>(()=>{});
@@ -159,7 +160,7 @@ export default function Experience({
 
  function announce(text:string,origin:Source,onEnd:()=>void){
   if(closedRef.current)return;
-  lastCharacterRef.current=text;
+  lastCharacterRef.current=text;lastCharacterSourceRef.current=origin;
   setCaption(text);setSource(origin);phaseTo('speaking');
   const serial=++speechSerial.current;
   pendingSpeechDone.current=onEnd;
@@ -209,7 +210,7 @@ export default function Experience({
 
  const finish=useCallback(async()=>{
   if(finishRef.current||!sessionRef.current||review)return;
-  finishRef.current=true;pauseRef.current=false;setPaused(false);
+  finishRef.current=true;closedRef.current=true;pauseRef.current=false;setPaused(false);
   cancelCapture();stopSpeech();phaseTo('reviewing');setError('');setNotice('');
   clockRef.current.pause();
   try{
@@ -222,7 +223,7 @@ export default function Experience({
    setReview(response.review);phaseTo('done');
    onComplete(sessionRef.current,challenge.id,response.review);
   }catch(e){
-   finishRef.current=false;
+   finishRef.current=false;closedRef.current=false;
    if(!mountedRef.current)return;
    setError(e instanceof Error?e.message:'Your review could not be saved. Please try again.');
    phaseTo('ready');
@@ -238,7 +239,10 @@ export default function Experience({
    const data=await gymApi<{sessionId:string;opening:string}>('start',{
     challengeId:challenge.id,transcriptConsent:saveTranscript
    });
-   if(closedRef.current)return;
+   if(closedRef.current){
+    void gymApi('abandon',{sessionId:data.sessionId}).catch(()=>{});
+    return;
+   }
    sessionRef.current=data.sessionId;
    clockRef.current.start();
    transcriptRef.current=[{role:'character',text:data.opening,source:'opening',turn:0}];
@@ -281,7 +285,7 @@ export default function Experience({
     return;
    }
    // The browser cancelled its utterance while paused. Replay the line.
-   announce(lastCharacterRef.current,source,()=>listenRef.current());
+   announce(lastCharacterRef.current,lastCharacterSourceRef.current,()=>listenRef.current());
    return;
   }
   if(pausedFromRef.current==='thinking'){
@@ -302,12 +306,14 @@ export default function Experience({
  function replay(){
   if(paused||!sessionRef.current||phaseRef.current==='thinking'||phaseRef.current==='reviewing')return;
   cancelCapture();stopSpeech();
-  announce(lastCharacterRef.current,source,()=>{phaseTo('ready');});
+  announce(lastCharacterRef.current,lastCharacterSourceRef.current,()=>{phaseTo('ready');});
  }
  function toggleMute(){
   const value=!mutedRef.current;mutedRef.current=value;setMuted(value);
-  if(value&&phaseRef.current==='speaking'){
-   stopSpeech();phaseTo('ready');
+  if(value&&(phaseRef.current==='speaking'||pauseRef.current)){
+   stopSpeech();
+   if(pauseRef.current)pausedFromRef.current='ready';
+   else phaseTo('ready');
   }
  }
  async function leave(){
