@@ -2,7 +2,7 @@ import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import type {FormEvent,ReactNode} from 'react';
 import type {User} from 'firebase/auth';
 import {createUserWithEmailAndPassword,onAuthStateChanged,sendPasswordResetEmail,signInWithEmailAndPassword,signOut} from 'firebase/auth';
-import {ArrowLeft,ArrowRight,AudioLines,BookOpen,Check,ChevronLeft,ChevronRight,Clock3,Headphones,LockKeyhole,LogOut,Menu,Mic,MicOff,Pause,Play,RotateCcw,Send,Shield,ShieldCheck,Sparkles,Square,Trash2,Trophy,Volume2,VolumeX,Waveform,X} from 'lucide-react';
+import {ArrowLeft,ArrowRight,AudioLines,BookOpen,Check,ChevronLeft,ChevronRight,Clock3,Headphones,LockKeyhole,LogOut,Menu,Mic,MicOff,Pause,Play,RotateCcw,Send,Shield,ShieldCheck,Sparkles,Square,Trash2,Trophy,Volume2,VolumeX,X} from 'lucide-react';
 import {auth} from './lib/firebase';
 import {gymApi} from './lib/gym-api';
 import {newRecognition,recognitionAvailable,playVoice,stopVoice,microphoneError} from './lib/speech-voice';
@@ -53,7 +53,7 @@ function AuthScreen(){
    if(mode==='signup'){
     if(!adult){setError('Speech Gym is currently available only to adults 18 and older.');return;}
     await createUserWithEmailAndPassword(auth,email.trim(),password);
-    await gymApi('confirmAdult',{confirm:'I_AM_18_OR_OLDER'}).catch(()=>{});
+    await gymApi('confirmAdult',{confirm:'I_AM_18_OR_OLDER'});window.dispatchEvent(new Event('speechgym:profile-updated'));
    }else await signInWithEmailAndPassword(auth,email.trim(),password);
   }catch(e){setError(authErrorMessage(e));}finally{setBusy(false);}
  }
@@ -338,7 +338,7 @@ function Experience({challenge,adultConfirmed,transcriptConsent,onConfirmAdult,o
   <div className="sg-experience-controls">
    <button className="sg-circle-button" aria-label={captions?'Hide captions':'Show captions'} onClick={()=>setCaptions(!captions)} title="Toggle captions"><BookOpen size={19}/></button>
    <button className={'sg-circle-button '+(muted?'sg-muted':'')} aria-label={muted?'Enable character voice':'Mute character voice'} onClick={()=>{setMuted(!muted);if(!muted)stopVoice();}}>{muted?<VolumeX size={21}/>:<Volume2 size={21}/>}</button>
-   <button className={'sg-mic-button '+(phase==='listening'?'active':'')} disabled={phase==='thinking'||phase==='reviewing'} onClick={()=>phase==='listening'?stopListening():void latestListen.current()} aria-label={phase==='listening'?'Finish speaking':'Start speaking'}>{phase==='listening'?<Square size={25} fill="currentColor"/>:<Mic size={31}/>}<span>{phase==='listening'?'FINISH SPEAKING':'TAP TO SPEAK'}</span></button>
+   <button className={'sg-mic-button '+(phase==='listening'?'active':'')} disabled={phase==='thinking'||phase==='reviewing'||phase==='opening'||!sessionRef.current} onClick={()=>phase==='listening'?stopListening():void latestListen.current()} aria-label={phase==='listening'?'Finish speaking':'Start speaking'}>{phase==='listening'?<Square size={25} fill="currentColor"/>:<Mic size={31}/>}<span>{phase==='listening'?'FINISH SPEAKING':'TAP TO SPEAK'}</span></button>
    <button className="sg-circle-button" onClick={speakAgain} title="Repeat the character" aria-label="Replay character"><RotateCcw size={20}/></button>
    <button className="sg-circle-button" onClick={()=>{setTypeMode(!typeMode);setError('');}} aria-label="Type instead" title="Type instead"><Menu size={20}/></button>
   </div>
@@ -358,7 +358,7 @@ function Sessions({sessions,onRetry,onDelete,onRefresh}:{sessions:Session[];onRe
    </article>})}</div>}
  </main>;
 }
-function ProfilePage({user,profile,sessions,onConfirm,onDeleteHistory,onDeleteAccount}:{user:User;profile:Profile;sessions:Session[];onConfirm:()=>Promise<void>;onDeleteHistory:()=>Promise<void>;onDeleteAccount:()=>Promise<void>}){
+function ProfilePage({user,profile,sessions,onConfirm,onDeleteHistory,onDeleteAccount,onTranscriptPreference}:{user:User;profile:Profile;sessions:Session[];onConfirm:()=>Promise<void>;onDeleteHistory:()=>Promise<void>;onDeleteAccount:()=>Promise<void>;onTranscriptPreference:(consent:boolean)=>Promise<void>}){
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
  const completed=sessions.filter(s=>s.status==='completed');
  const skills=Array.from(new Set(completed.flatMap(s=>s.review?.dimensions??[]))).slice(0,8);
@@ -368,7 +368,7 @@ function ProfilePage({user,profile,sessions,onConfirm,onDeleteHistory,onDeleteAc
    <div className="sg-profile-numbers"><div><strong>{completed.length}</strong><span>Reps</span></div><div><strong>{Math.floor(sessions.reduce((t,s)=>t+s.durationSeconds,0)/60)}m</strong><span>Practice</span></div></div></section>
    <section className="sg-profile-card sg-skill-card"><span className="sg-eyebrow">SKILLS YOU'VE PRACTISED</span><h2>Keep building.</h2>{skills.length?<div className="sg-skills">{skills.map(s=><Pill key={s}>{s}</Pill>)}</div>:<p>Complete a challenge to begin your training journal. No made-up scores, only practice you actually did.</p>}<div className="sg-profile-quote">"A stronger speaker is built, not born."</div></section></div>
   <section className="sg-settings"><h2>Privacy & account</h2><div className="sg-setting-row"><div><strong><LockKeyhole size={17}/> Account eligibility</strong><p>{profile?.adultConfirmed?'Confirmed 18+ for this private adult beta.':'You must confirm you are 18 or older to start a challenge.'}</p></div>{!profile?.adultConfirmed&&<button className="sg-btn sg-btn-outline" disabled={busy} onClick={()=>void run(onConfirm,'Eligibility confirmed.')}>Confirm 18+</button>}</div>
-   <div className="sg-setting-row"><div><strong><MicOff size={17}/> Microphone & transcripts</strong><p>Speech recognition comes from your browser and may use the browser provider's services. Speech Gym does not save raw audio or transcripts by default. Your AI responses are generated server-side.</p></div><Pill>NO AUDIO RECORDING</Pill></div>
+   <div className="sg-setting-row"><div><strong><MicOff size={17}/> Microphone & transcripts</strong><p>Speech recognition comes from your browser and may use the browser provider's services. Your transcribed words are sent to the AI provider to respond. Speech Gym never saves raw audio. Saving transcripts is optional and off by default.</p></div><label className="sg-pref-toggle"><input type="checkbox" checked={!!profile?.transcriptConsent} disabled={busy} onChange={e=>void run(()=>onTranscriptPreference(e.target.checked),'Transcript preference updated.')}/><span>Save transcripts</span></label></div>
    <div className="sg-setting-row"><div><strong><Trash2 size={17}/> Clear speaking history</strong><p>Delete completed sessions, reviews and any opt-in transcripts. Your sign-in remains intact.</p></div><button className="sg-btn sg-btn-outline" disabled={busy} onClick={()=>{if(confirm('Permanently delete your Speech Gym workout history?'))void run(onDeleteHistory,'Speaking history deleted.');}}>Delete history</button></div>
    <div className="sg-setting-row"><div><strong><Shield size={17}/> Delete account</strong><p>Delete your login and Speech Gym data. Some data from the old AI Classroom may require separate removal.</p></div><button className="sg-btn sg-btn-danger" disabled={busy} onClick={()=>{const value=prompt('Type DELETE to permanently delete your account.');if(value==='DELETE')void run(onDeleteAccount,'Account deleted.');}}>Delete account</button></div>
    {message&&<p className="sg-setting-message" role="status">{message}</p>}
@@ -401,6 +401,7 @@ export default function App(){
   finally{setLoadingData(false);}
  },[]);
  useEffect(()=>onAuthStateChanged(auth,u=>{setUser(u);setAuthReady(true);if(u)void load();else{setProfile(null);setSessions([]);}}),[load]);
+ useEffect(()=>{const refresh=()=>void load();window.addEventListener('speechgym:profile-updated',refresh);return()=>window.removeEventListener('speechgym:profile-updated',refresh);},[load]);
  useEffect(()=>{const handler=()=>setRoute(readRoute());addEventListener('popstate',handler);return()=>removeEventListener('popstate',handler);},[]);
  const navigate=useCallback((path:string)=>{
   history.pushState({},'',path);setRoute(readRoute());setMobileNav(false);window.scrollTo(0,0);
@@ -413,6 +414,7 @@ export default function App(){
  },[navigate,load]);
  const confirmAdult=useCallback(async()=>{await gymApi('confirmAdult',{confirm:'I_AM_18_OR_OLDER'});setProfile(p=>({...p,adultConfirmed:true}));},[]);
  async function deleteSession(id:string){await gymApi('deleteSession',{sessionId:id});setSessions(s=>s.filter(x=>x.id!==id));}
+ async function saveTranscriptPreference(consent:boolean){await gymApi('setTranscriptPreference',{transcriptConsent:consent});setProfile(p=>({...p,transcriptConsent:consent}));}
  async function deleteHistory(){let more=true;while(more){const result=await gymApi<{more:boolean}>('deleteHistory');more=result.more;}setSessions([]);}
  async function deleteAccount(){await gymApi('deleteAccount',{confirm:'DELETE_MY_ACCOUNT'});await signOut(auth);navigate('/explore');}
  if(!authReady)return <div className="sg-boot"><Logo/><span>PREPARING YOUR TRAINING FLOOR…</span></div>;
@@ -427,7 +429,7 @@ export default function App(){
  </header>
  {route.page==='explore'?<Explore sessions={sessions} onStart={start}/>:
   route.page==='sessions'?<Sessions sessions={sessions} onRetry={start} onDelete={deleteSession} onRefresh={()=>navigate('/explore')}/>:
-  route.page==='profile'?<ProfilePage user={user} profile={profile} sessions={sessions} onConfirm={confirmAdult} onDeleteHistory={deleteHistory} onDeleteAccount={deleteAccount}/>:
+  route.page==='profile'?<ProfilePage user={user} profile={profile} sessions={sessions} onConfirm={confirmAdult} onDeleteHistory={deleteHistory} onDeleteAccount={deleteAccount} onTranscriptPreference={saveTranscriptPreference}/>:
   route.page==='review'?<ReviewPage session={sessions.find(s=>s.id===route.id)} onRetry={start} onHome={()=>navigate('/explore')}/>:
   <Explore sessions={sessions} onStart={start}/>}
  <nav className="sg-bottom-nav" aria-label="Mobile navigation"><button className={route.page==='explore'?'active':''} onClick={()=>navigate('/explore')}><Sparkles size={20}/>Explore</button><button className={route.page==='sessions'?'active':''} onClick={()=>navigate('/sessions')}><Clock3 size={20}/>Sessions</button><button className={route.page==='profile'?'active':''} onClick={()=>navigate('/profile')}><Shield size={20}/>Profile</button></nav>

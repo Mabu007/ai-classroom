@@ -8,7 +8,7 @@ import { challengeById } from '../shared/catalog.mjs';
 import { sanitizeConversation, guidedFollowUp, deterministicReview, validateAIReview } from '../server/speech-coach.mjs';
 
 const requestSchema=z.object({
- action:z.enum(['profile','confirmAdult','start','turn','finish','list','deleteSession','deleteHistory','deleteAccount']),
+ action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','finish','list','deleteSession','deleteHistory','deleteAccount']),
  challengeId:z.string().min(3).max(100).optional(),
  sessionId:z.string().min(5).max(128).optional(),
  text:z.string().trim().max(1500).optional(),
@@ -104,6 +104,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    if(input.confirm!=='I_AM_18_OR_OLDER')return replyError(res,400,'Confirm that you are 18 or older.');
    await profile.set({adultConfirmed:true,updatedAt:FieldValue.serverTimestamp()}, {merge:true});
    return res.status(200).json({adultConfirmed:true});
+  }
+  if(input.action==='setTranscriptPreference'){
+   await profile.set({transcriptConsent:input.transcriptConsent===true,updatedAt:FieldValue.serverTimestamp()},{merge:true});
+   return res.status(200).json({saved:true});
   }
   if(input.action==='start'){
    const challenge=challengeById(input.challengeId??'');
