@@ -8,7 +8,7 @@ import { challengeById } from '../shared/catalog.mjs';
 import { sanitizeConversation, guidedFollowUp, deterministicReview, validateAIReview } from '../server/speech-coach.mjs';
 
 const requestSchema=z.object({
- action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','finish','abandon','list','deleteSession','deleteHistory','deleteAccount']),
+ action:z.enum(['profile','confirmAdult','setTranscriptPreference','start','turn','finish','abandon','list','sessionDetail','deleteTranscript','deleteSession','deleteHistory','deleteAccount']),
  challengeId:z.string().min(3).max(100).optional(),
  sessionId:z.string().min(5).max(128).optional(),
  text:z.string().trim().max(1500).optional(),
@@ -126,19 +126,20 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
      uid,challengeId:challenge.id,challengeVersion:challenge.version,category:challenge.category,
      status:'active',turnsCount:0,startedAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp(),
      workingUntil:0,transcriptConsent:input.transcriptConsent===true,
+     ...(input.transcriptConsent===true?{transcript:[{role:'character',text:challenge.opening,source:'opening',turn:0}]}:{}),
      durationSeconds:0,voiceProvider:'browser-native',modelProvider:'openrouter-on-request'
     });
    });
    return res.status(200).json({sessionId:doc.id,opening:challenge.opening,voice:challenge.voice,maxTurns:challenge.maxTurns});
   }
   if(input.action==='list'){
-   const snap=await sessions.where('uid','==',uid).limit(60).get();
+   const snap=await sessions.where('uid','==',uid).limit(150).get();
    const items=snap.docs.map(d=>{
     const v=d.data();
     return {id:d.id,challengeId:v.challengeId,challengeVersion:v.challengeVersion,status:v.status,
       turnsCount:v.turnsCount??0,durationSeconds:v.durationSeconds??0,review:v.review??null,
       startedAt:toMillis(v.startedAt),updatedAt:toMillis(v.updatedAt),transcriptConsent:v.transcriptConsent===true,
-      transcript:v.transcriptConsent?((v.transcript as unknown[])??[]):undefined};
+      hasTranscript:Array.isArray(v.transcript) && v.transcript.length>0};
    }).sort((a,b)=>b.startedAt-a.startedAt);
    return res.status(200).json({sessions:items});
   }
@@ -168,6 +169,19 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
   const ref=sessions.doc(id);
   const snap=await ref.get();
   if(!snap.exists||snap.get('uid')!==uid)return replyError(res,404,'Session not found.');
+  if(input.action==='sessionDetail'){
+   const transcript=snap.get('transcript');
+   return res.status(200).json({session:{
+     id:ref.id,challengeId:snap.get('challengeId'),challengeVersion:snap.get('challengeVersion'),
+     status:snap.get('status'),turnsCount:snap.get('turnsCount')??0,durationSeconds:snap.get('durationSeconds')??0,
+     review:snap.get('review')??null,transcriptConsent:snap.get('transcriptConsent')===true,
+     transcript:Array.isArray(transcript)?transcript:[],startedAt:toMillis(snap.get('startedAt'))
+   }});
+  }
+  if(input.action==='deleteTranscript'){
+   await ref.update({transcript:FieldValue.delete(),transcriptConsent:false,updatedAt:FieldValue.serverTimestamp()});
+   return res.status(200).json({deleted:true});
+  }
   if(input.action==='deleteSession'){
    await ref.delete();
    return res.status(200).json({deleted:true});
@@ -210,7 +224,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
       {role:'character',text:response.reply,source:response.source,turn}
      );
     }
-    await ref.update(update);
+    // Don't resurrect transcript events after an in-flight turn was abandoned
+    // or finalized while the model request was running.
+    await store.runTransaction(async tx=>{
+      const current=await tx.get(ref);
+      if(!current.exists||current.get('status')!=='active')return;
+      tx.update(ref,update);
+    });
    }catch(e){
     await ref.update({workingUntil:0}).catch(()=>{});
     throw e;
@@ -218,7 +238,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
    return res.status(200).json({...response,turn,maxTurns:challenge.maxTurns,shouldFinish:turn>=challenge.maxTurns});
   }
   if(input.action==='finish'){
-   const clean=sanitizeConversation(input.history);
+   // Transcription storage is per-attempt opt-in. If saved, use stored
+   // turns as the authoritative review source; otherwise use transient input.
+   const recorded=snap.get('transcript');
+   const clean=sanitizeConversation(snap.get('transcriptConsent')===true && Array.isArray(recorded)
+     ?recorded:input.history);
    const answers=clean.filter(x=>x.role==='user').map(x=>x.text);
    const review=await aiReview(challenge,answers);
    const duration=Math.min(1200,Math.max(0,input.durationSeconds??0));
@@ -226,7 +250,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse) {
     status:'completed',durationSeconds:duration,review,updatedAt:FieldValue.serverTimestamp(),
     workingUntil:0,finishedAt:FieldValue.serverTimestamp()
    };
-   if(snap.get('transcriptConsent')===true)patch.transcript=clean;
+   if(snap.get('transcriptConsent')===true)patch.transcript=Array.isArray(recorded)?recorded:clean;
    await ref.update(patch);
    return res.status(200).json({sessionId:id,review});
   }
