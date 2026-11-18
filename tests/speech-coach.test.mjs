@@ -23,7 +23,7 @@ test('history bounds strip invalid turns and long prompts',()=>{
 });
 test('guided follow-ups stay in a challenge and generated rubric requires evidence-safe fields',()=>{
  const c=challenges[6];
- assert.ok(guidedFollowUp(c,4).includes('closing'));
+ assert.ok(guidedFollowUp(c,5).includes('closing'));
  assert.equal(validateAIReview({},c,[]),null);
  assert.equal(countWords('hello  world'),2);
 });
