@@ -1,3 +1,4 @@
+import '@excalidraw/excalidraw/index.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Excalidraw, convertToExcalidrawElements } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';

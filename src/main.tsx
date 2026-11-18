@@ -1,7 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/app.css';
-import '@excalidraw/excalidraw/index.css';
 import 'katex/dist/katex.min.css';
 
 type FirebaseWebConfig = { apiKey: string; authDomain: string; projectId: string; appId: string };
