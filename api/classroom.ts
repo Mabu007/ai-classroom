@@ -54,6 +54,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ roomId: room.id });
     }
 
+    if (input.action === 'listChildren') {
+      const snap = await store.collection('users').doc(uid).collection('children').limit(12).get();
+      return res.status(200).json({ children: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+    }
     if (input.action === 'createChild') {
       const childCount = await store.collection('users').doc(uid).collection('children').count().get();
       if (childCount.data().count >= 12) return res.status(429).json({ error: 'Learner profile limit reached.' });

@@ -251,3 +251,6 @@
   .studio-next svg{display:none}
   .studio-side-panel{bottom:81px}
 }
+
+.studio-board-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:#fff;color:#818ba7;font-size:12px}
+.studio-board-loading svg{color:#656de6}

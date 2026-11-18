@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { User } from 'firebase/auth';
 import { createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -9,7 +9,8 @@ import { auth, configured, db } from './lib/firebase';
 import { classroomApi } from './lib/api';
 import { speak, stopSpeech } from './lib/voice';
 import type { ClassroomEvent, Child, Room, TeacherStep } from './lib/types';
-import Whiteboard from './components/Whiteboard';
+const Whiteboard = lazy(() => import('./components/Whiteboard'));
+
 
 type Page = 'home' | 'dashboard' | 'room' | 'admin';
 function route(): { page: Page; roomId?: string } {
@@ -101,9 +102,28 @@ function useRooms(uid?: string) {
   return rooms;
 }
 
+
 function useChildren(uid: string) {
   const [children, setChildren] = useState<Child[]>([]);
-  useEffect(() => { if (!uid) { setChildren([]); return; } return onSnapshot(collection(db,'users',uid,'children'), s => setChildren(s.docs.map(d => ({ ...d.data(), id: d.id } as Child))), () => setChildren([])); }, [uid]);
+  useEffect(() => {
+    if (!uid) { setChildren([]); return; }
+    let active = true;
+    let fallback = false;
+    async function fromServer() {
+      try {
+        const data = await classroomApi<{children:Child[]}>('listChildren');
+        if(active) setChildren(data.children);
+      } catch { /* Remain on the last known learner list. */ }
+    }
+    const unsubscribe = onSnapshot(collection(db,'users',uid,'children'),
+      snapshot => { if(active)setChildren(snapshot.docs.map(d=>({...d.data(),id:d.id} as Child))); },
+      () => {fallback=true;void fromServer();});
+    void fromServer();
+    const refresh = () => {void fromServer();};
+    window.addEventListener('ai-classroom-children-change', refresh);
+    const timer = window.setInterval(() => {if(fallback)void fromServer();},20000);
+    return () => {active=false;unsubscribe();window.removeEventListener('ai-classroom-children-change', refresh);window.clearInterval(timer);};
+  },[uid]);
   return children;
 }
 
@@ -244,7 +264,9 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
 
   return <div className={'studio-root' + (focus ? ' studio-focus' : '') + (panel !== 'closed' ? ' studio-panel-open' : '')} ref={studioRef}>
     <div className="studio-canvas" aria-label="Interactive classroom whiteboard">
-      <Whiteboard events={events} grid={grid}/>
+      <Suspense fallback={<div className="studio-board-loading"><BookOpen size={25}/><span>Preparing the whiteboard…</span></div>}>
+        <Whiteboard events={events} grid={grid}/>
+      </Suspense>
     </div>
     <div className="studio-top">
       <div className="studio-top-start">
@@ -345,7 +367,7 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
 
 function Dashboard({ user, admin, rooms, children, selectedChild, selectChild, navigate, onCreate, onEnter, entering }: { user:User;admin:boolean;rooms:Room[];children:Child[];selectedChild:string;selectChild:(id:string)=>void;navigate:(path:string)=>void;onCreate:()=>void;onEnter:()=>void;entering:boolean }) {
   const [firstName,setFirstName]=useState('');const [grade,setGrade]=useState(10);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
-  async function addChild(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{await classroomApi('createChild',{firstName,grade});setFirstName('');}catch(e){setError(e instanceof Error?e.message:'Could not add profile.');}finally{setBusy(false);}}
+  async function addChild(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{await classroomApi('createChild',{firstName,grade});setFirstName('');window.dispatchEvent(new Event('ai-classroom-children-change'));}catch(e){setError(e instanceof Error?e.message:'Could not add profile.');}finally{setBusy(false);}}
   return <div className="dashboard shell"><div className="dash-heading"><div><div className="eyebrow dashboard-eyebrow"><Sparkles size={14}/> YOUR LEARNING SPACE</div><h1>Good to see you <span>again.</span></h1><p>Every big idea starts with a little curiosity. Ready for class?</p></div><div className="dash-date"><CalendarDays size={20}/> Grade 10 · Mathematics</div></div>{error&&<Banner message={error} onClose={()=>setError('')}/>}
     <div className="dash-grid"><div className="primary-stack"><section className="dashboard-feature"><div><span className="pill-white"><span className="online-dot"/> YOUR NEXT LESSON</span><h2>Unlock the power<br/>of factorisation.</h2><p>Learn to break down quadratic expressions with a teacher who makes every step clear.</p><button className="btn white" disabled={entering} onClick={onEnter}>{entering ? "Opening…" : "Open your classroom"} <ArrowRight size={18}/></button></div><div className="feature-illustration"><div className="math-sticker">x² + 7x + 10</div><div className="math-sticker smaller">(x + 5)(x + 2)</div><div className="drawing-pencil">✦</div></div></section><div className="section-heading"><div><h2>Classrooms</h2><p>Your learning spaces, all in one place.</p></div><Btn onClick={onEnter} disabled={entering}><Plus size={17}/> Practice classroom</Btn></div><div className="room-list">{rooms.length?rooms.map(r=><button key={r.id} onClick={()=>navigate(`/classroom/${r.id}`)} className="room-card"><span className="room-card-icon"><BookOpen size={23}/></span><div><strong>{r.title}</strong><p>Grade {r.grade} · {r.subject} · {r.topic}</p></div><span className={`status-pill ${r.status}`}>{r.status.replace('_',' ')}</span><ChevronRight size={20}/></button>):<div className="empty-rooms"><BookOpen size={24}/><h3>No classrooms yet</h3><p>'Your personal classroom is ready whenever you are. Click “Practice classroom” to begin.'</p></div>}</div></div>
       <div className="secondary-stack"><div className="profile-card"><div className="sidecard-label"><Users size={18}/> LEARNER PROFILES</div><p>Manage the learners in your family. Select a profile before joining a class.</p><div className="children-list">{children.map(c=><button type="button" onClick={()=>selectChild(c.id)} className={`child ${selectedChild===c.id?'selected':''}`} key={c.id}><span>{c.firstName.charAt(0).toUpperCase()}</span><div><strong>{c.firstName}</strong><small>Grade {c.grade}</small></div>{selectedChild===c.id&&<CheckCircle2 size={18}/>}</button>)}</div><form onSubmit={addChild} className="child-form"><label>Learner first name<input required maxLength={40} placeholder="e.g. Thabo" value={firstName} onChange={e=>setFirstName(e.target.value)}/></label><label>Grade<select value={grade} onChange={e=>setGrade(Number(e.target.value))}>{Array.from({length:12},(_,i)=><option key={i+1} value={i+1}>Grade {i+1}</option>)}</select></label><button type="submit" disabled={busy} className="btn secondary full"><Plus size={16}/> Add learner profile</button></form></div><div className="help-card"><div className="help-icon"><Brain size={22}/></div><h3>How it works</h3><p>One AI teacher runs the lesson for everyone. Each learner sees the same live whiteboard and can ask a question.</p></div></div></div>

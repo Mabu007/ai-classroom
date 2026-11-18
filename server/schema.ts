@@ -15,6 +15,7 @@ export const teacherStepSchema = z.object({
 });
 export const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('me') }),
+  z.object({ action: z.literal('listChildren') }),
   z.object({ action: z.literal('createChild'), firstName: z.string().trim().min(1).max(40), grade: z.number().int().min(1).max(12) }),
   z.object({ action: z.literal('create') }),
   z.object({ action: z.literal('createPractice') }),
