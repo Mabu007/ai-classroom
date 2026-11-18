@@ -12,7 +12,7 @@ export default function Whiteboard({ events, grid = false }: { events: Classroom
   const stageSequence=stageEvent?.type==='teacher_step'?stageEvent.sequence:null;
   const actionCount=stageEvent?.type==='teacher_step' && Array.isArray(stageEvent.payload.board)
     ? stageEvent.payload.board.length:0;
-  const lastStageRef=useRef<string|undefined>();
+  const lastStageRef=useRef<string|undefined>(undefined);
   // Draw one authored action at a time; never invent whiteboard content in the browser.
   useEffect(()=>{
     if(!stageId || !actionCount){setRevealCount(Infinity);return;}
