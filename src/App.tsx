@@ -140,6 +140,8 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
   const [feedback, setFeedback] = useState('');
   const [notice, setNotice] = useState('');
   const [muted, setMuted] = useState(false);
+  const [auto, setAuto] = useState(false);
+  const advancedStep = useRef<number>(-1);
   const [panel, setPanel] = useState<'closed' | 'chat' | 'activity' | 'help'>('closed');
   const [grid, setGrid] = useState(false);
   const [focus, setFocus] = useState(false);
@@ -160,7 +162,7 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
   useEffect(() => {
     let active = true;
     latestSeen.current = null;
-    setRoom(null); setJoined(null); setEvents([]); setLoading(true); setFallback(false); setError('');
+    setRoom(null); setJoined(null); setEvents([]); setLoading(true); setFallback(false); setError(''); setAuto(false); advancedStep.current=-1;
     void refresh().catch(e => {
       if (!active) return;
       setLoading(false);
@@ -220,7 +222,8 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
       if (action === 'ask') { setQuestion(''); setNotice('Question added to the teacher queue.'); }
       if (action === 'raise') setNotice('Hand raised. Your teacher has been notified.');
       if (action === 'answer') setFeedback(result.feedback ?? 'Your answer has been recorded.');
-      if (action === 'restart') { stopSpeech(); setFeedback(''); latestSeen.current = null; }
+      if (action === 'restart') { stopSpeech(); setFeedback(''); latestSeen.current = null; advancedStep.current=-1; setAuto(false); }
+      if (action === 'skipQuestion') setNotice('Question deferred; the lesson can continue.');
       await refresh();
       return result;
     } catch (e) {
@@ -243,21 +246,64 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
     } catch { setError('Full screen is unavailable in this browser.'); }
   }
   async function startLesson() {
-    const started = await doAction('start');
-    // The first click should make Miss Nova teach, not just change a status.
-    if (started) await doAction('step');
+    // The server publishes the FIRST whiteboard step as part of the start action.
+    // No second request is needed, so one click always displays the board.
+    latestSeen.current=events.at(-1)?.sequence ?? 0;
+    advancedStep.current=-1;
+    setAuto(true);
+    const started=await doAction('start');
+    if(!started)setAuto(false);
   }
   function teacherAction() {
-    if (!room) return;
-    if (room.status === 'scheduled') void startLesson();
-    else if (room.status === 'paused') void doAction('resume');
-    else if (room.status === 'completed') void doAction('restart');
-    else void doAction('step');
+    if (!room || busy) return;
+    if (room.status === 'scheduled') { void startLesson(); return; }
+    if (room.status === 'paused') { setAuto(true); void doAction('resume'); return; }
+    if (room.status === 'completed') { void doAction('restart'); return; }
+    if (room.status === 'awaiting_answer') { setAuto(true); void doAction('skipExercise'); return; }
+    if (auto) { setAuto(false); return; } // Pause automatic progression without losing the lesson.
+    setAuto(true);
+    // If a lesson was opened in the middle, resume immediately.
+    advancedStep.current=-1;
   }
   const teacherActionLabel = room?.status === 'scheduled' ? 'Start lesson'
     : room?.status === 'paused' ? 'Resume lesson'
-    : room?.status === 'completed' ? 'Restart lesson' : 'Next teaching step';
-  const teacherActionDisabled = !!busy || (room?.status === 'completed' && room.mode !== 'practice') || (!['scheduled', 'teaching', 'awaiting_answer', 'paused', 'completed'].includes(room?.status ?? ''));
+    : room?.status === 'completed' ? 'Restart lesson'
+    : room?.status === 'awaiting_answer' ? 'Show solution'
+    : auto ? 'Pause auto lesson' : 'Continue lesson';
+  const teacherActionDisabled = !!busy || (room?.status === 'completed' && room.mode !== 'practice') ||
+    !['scheduled', 'teaching', 'awaiting_answer', 'paused', 'completed'].includes(room?.status ?? '');
+
+  // Single-click progression: one authorized owner performs the next bounded step
+  // after the current explanation has had time to be read aloud.
+  useEffect(() => {
+    if (!auto || !canControl || joined !== true || busy || room?.status !== 'teaching') return;
+    const latest = teacherEvents.at(-1);
+    if (!latest || advancedStep.current === latest.sequence) return;
+    advancedStep.current=latest.sequence;
+    const speech=String(latest.payload.speech ?? '');
+    const duration=Math.max(6500,Math.min(20000,Math.round(speech.length * 70)));
+    const timer=window.setTimeout(async () => {
+      const result=await doAction('step');
+      if(!result)setAuto(false);
+    },duration);
+    return () => {
+      window.clearTimeout(timer);
+      // Effect may rerun for unrelated activity or a brief busy state.
+      if(advancedStep.current===latest.sequence)advancedStep.current=-1;
+    };
+  },[auto,canControl,joined,busy,room?.status,teacherEvents,doAction]);
+
+  useEffect(() => {
+    if (room?.status === 'awaiting_answer' && joined) {
+      setPanel('chat');
+      // Stop automatically while an answer is required, but remember auto mode
+      // so submitting a correct answer resumes from the next stage.
+    }
+    if (room?.status === 'completed' || room?.status === 'paused') {
+      // Pause automatically when a teacher or learner requests it.
+      if (room.status === 'completed') setAuto(false);
+    }
+  },[room?.status,joined]);
   const statusLabel = room?.status === 'scheduled' ? 'Ready to begin'
     : room?.status === 'completed' ? 'Lesson complete'
     : room?.status === 'paused' ? 'Lesson paused'
@@ -288,7 +334,7 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
       </div>
     </div>
 
-    <div className="studio-progress-pill"><span className="studio-progress-label">TODAY'S LESSON</span><div className="studio-progress-track"><span style={{width:progress + '%'}}/></div><strong>{room.stage}/5</strong></div>
+    <div className="studio-progress-pill"><span className="studio-progress-label">{auto?'AUTO LESSON PLAYING':'TODAY’S LESSON'}</span><div className="studio-progress-track"><span style={{width:progress + '%'}}/></div><strong>{room.stage}/5</strong></div>
 
     <div className="studio-rail" role="toolbar" aria-label="Classroom controls">
       <button className={'studio-tool' + (panel === 'chat' ? ' is-active' : '')} title="Ask the teacher" aria-label="Ask the teacher" onClick={showQuestions}><MessageCircle size={20}/><span>Ask</span></button>
@@ -319,24 +365,24 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
 
     {joined !== false && <div className="studio-caption">
       <span className="studio-caption-stars"><Sparkles size={17}/></span>
-      <div><span className="studio-caption-label">MISS NOVA IS TEACHING</span><p>{lastStep?.speech ?? 'Welcome! We will learn how to break down quadratic expressions, step by step.'}</p></div>
+      <div><span className="studio-caption-label">{lastStep?.origin === 'guided' ? 'VERIFIED GUIDED LESSON' : 'MISS NOVA • AI ANSWER'}</span><p>{lastStep?.speech ?? 'Welcome! We will learn how to break down quadratic expressions, step by step.'}</p></div>
       {lastStep && <button onClick={replay} title="Replay explanation" aria-label="Replay explanation"><Volume2 size={19}/></button>}
     </div>}
 
-    {error && <div className="studio-banner"><Banner message={error} onClose={() => setError('')}/></div>}
+    {error && <div className="studio-banner"><Banner message={error} onClose={() => setError('')}/>{error.startsWith('AI teacher') && canControl && <button className="studio-recovery" onClick={async () => { await doAction('skipQuestion'); setAuto(true); }}>Continue without the unanswered question <ArrowRight size={16}/></button>}</div>}
     {notice && <div className="studio-toast" role="status"><CheckCircle2 size={16}/>{notice}<button aria-label="Dismiss" onClick={() => setNotice('')}><X size={15}/></button></div>}
 
     {panel !== 'closed' && <div className="studio-side-panel">
       <div className="studio-panel-head"><div><span className="studio-panel-eyebrow">CLASSROOM SPACE</span><h2>{panel === 'chat' ? 'Ask Miss Nova' : panel === 'activity' ? 'Lesson activity' : 'How it works'}</h2></div><button className="studio-icon" aria-label="Close panel" onClick={() => setPanel('closed')}><X size={20}/></button></div>
       {panel === 'chat' ? <>
         <div className="studio-panel-scroll">
-          <div className="studio-teacher-card"><div className="studio-teacher-avatar"><Sparkles size={21}/></div><div><strong>Miss Nova <span>AI Teacher</span></strong><p>{lastStep?.speech ?? 'Hi there! Ready to learn factorisation together?'}</p></div></div>
+          <div className="studio-teacher-card"><div className="studio-teacher-avatar"><Sparkles size={21}/></div><div><strong>Miss Nova <span>{lastStep?.origin === 'guided' ? 'Guided Maths' : 'AI Teacher'}</span></strong><p>{lastStep?.speech ?? 'Hi there! Ready to learn factorisation together?'}</p></div></div>
           {lastStep?.equationLatex && <div className="studio-equation" dangerouslySetInnerHTML={{ __html: katex.renderToString(lastStep.equationLatex, {throwOnError:false,trust:false,output:'html'}) }}/>}
           {lastStep?.question && <div className="studio-question-prompt"><strong><Brain size={16}/> Let's think</strong><p>{lastStep.question}</p></div>}
           {events.filter(e => e.sequence > resetSequence && e.type === 'question_asked').slice(-8).map(e => <div className="studio-message" key={e.id}><span>Question from class</span><p>{String(e.payload.question ?? '')}</p></div>)}
           {room.status === 'awaiting_answer' && <form className="studio-answer-form" onSubmit={e => { e.preventDefault(); if(answer.trim()) void doAction('answer', {answer:answer.trim()}); }}>
             <strong><Zap size={17}/> Quick exercise</strong><p>Factorise x² + 5x + 6</p><input aria-label="Your answer" placeholder="(x+...)(x+...)" value={answer} onChange={e => setAnswer(e.target.value)} maxLength={120}/>
-            <button className="studio-primary" type="submit" disabled={!!busy || !answer.trim()}>Check answer <ArrowRight size={15}/></button>{feedback && <small>{feedback}</small>}
+            <button className="studio-primary" type="submit" disabled={!!busy || !answer.trim()}>Check answer <ArrowRight size={15}/></button>{feedback && <small>{feedback}</small>}{canControl && <button type="button" className="studio-quiet-continue" onClick={() => { setAuto(true); void doAction('skipExercise'); }}>Show solution and continue</button>}
           </form>}
         </div>
         <form className="studio-chat-compose" onSubmit={e => { e.preventDefault(); if(question.trim()) void doAction('ask',{question:question.trim()}); }}>
@@ -344,7 +390,7 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
           <input ref={questionRef} placeholder="Ask a question…" aria-label="Your question" value={question} maxLength={400} onChange={e=>setQuestion(e.target.value)} disabled={joined === false}/>
           <button className="studio-send" type="submit" aria-label="Send question" disabled={!!busy || !question.trim() || joined === false}><Send size={18}/></button>
         </form>
-        <p className="studio-panel-footnote">Questions are queued for the next teaching step.</p>
+        <p className="studio-panel-footnote">Questions use live AI. Guided maths continues if AI is unavailable.</p>
       </> : panel === 'activity' ? <div className="studio-panel-scroll studio-history">
         {events.filter(e => e.sequence > resetSequence).slice().reverse().length === 0 ? <p className="studio-panel-empty">Lesson activity will appear here.</p> :
           events.filter(e => e.sequence > resetSequence).slice().reverse().map(e => <div className="studio-history-entry" key={e.id}><span className="studio-history-dot"/><div><strong>{e.type === 'teacher_step' ? String(e.payload.heading ?? 'Teaching step') : e.type === 'question_asked' ? 'Question asked' : e.type === 'hand_raised' ? 'Hand raised' : e.type === 'answer' ? 'Exercise submitted' : 'Classroom update'}</strong><small>Event {e.sequence}</small></div></div>)}
@@ -361,7 +407,7 @@ function Classroom({ roomId, admin, childId, back }: { roomId: string; admin: bo
         <button className="studio-dock-question" onClick={showQuestions}><MessageCircle size={18}/><span>Ask a question</span></button>
       </div>
       {canControl && <><span className="studio-dock-divider"/><div className="studio-control-group">
-        {['teaching','awaiting_answer'].includes(room.status) && <button className="studio-dock-icon" aria-label="Pause lesson" title="Pause lesson" disabled={!!busy} onClick={()=>void doAction('pause')}><Pause size={18}/></button>}
+        {['teaching','awaiting_answer'].includes(room.status) && <button className="studio-dock-icon" aria-label="Pause lesson" title="Pause lesson" disabled={!!busy} onClick={()=>{setAuto(false);void doAction('pause');}}><Pause size={18}/></button>}
         <button className="studio-primary studio-next" onClick={teacherAction} disabled={teacherActionDisabled}>
           {busy ? 'Working…' : teacherActionLabel} <ArrowRight size={17}/>
         </button>

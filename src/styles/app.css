@@ -254,3 +254,8 @@
 
 .studio-board-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:#fff;color:#818ba7;font-size:12px}
 .studio-board-loading svg{color:#656de6}
+
+.studio-recovery{margin-top:7px;border:1px solid #dfe1ff;border-radius:11px;background:#fff;color:#4d55d2;display:flex;justify-content:center;align-items:center;gap:8px;padding:11px 15px;width:100%;font-size:12px;font-weight:750;box-shadow:0 7px 24px #1c27681a}
+.studio-recovery:hover{background:#f5f6ff}
+.studio-quiet-continue{border:0;background:transparent;font-size:11px;font-weight:750;color:#525fdb;text-decoration:underline;text-align:left;padding:6px 0}
+.studio-quiet-continue:hover{color:#3039a6}
